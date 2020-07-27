@@ -1,0 +1,145 @@
+Load libraries. 
+```{r}
+source("../../General/general_functions.R")
+library(biobroom)
+library(tidyverse)
+```
+
+Load vOTU data and format. Need to round the count table generated with BAMM since DESeq expects integers. 
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+v.map <- filter(map, Extraction == "VFD" & Keep)
+
+otu.cts <- readRDS("../Data/virome_count_75_mtx.RDS")
+v.otu.cts <- otu.cts[,colnames(otu.cts) %in% v.map$SampleID]
+v.otu.cts <- v.otu.cts[, match(v.map$SampleID, colnames(v.otu.cts))]
+v.otu.cts <- v.otu.cts[rowSums(v.otu.cts) > 0, ]
+v.otu.cts <- round(v.otu.cts)
+```
+
+Load taxonomic info to annotate results
+```{r}
+vc.genome <- readRDS("../Data/genome_vc_master.RDS")
+vc.clstr <- readRDS("../Data/cluster_vc_master.RDS")
+```
+
+
+Perform differential abundance analyses. 
+I am using a single formula with the three factors shown to affect beta diversity in a PERMANOVA (Collection Time Point + Column + Biochar)
+```{r}
+v.dds.cts <- DESeq2::DESeqDataSetFromMatrix(countData = v.otu.cts,
+                             colData = v.map,
+                             design = ~ Month + Column + Biochar)
+v.dds.cts <- DESeq2::DESeq(v.dds.cts)
+```
+
+Get the results for each factor and annotate. 
+```{r}
+v.res.batch <- tidy(DESeq2::results(v.dds.cts, contrast = c("Month", "Apr", "Aug"))) %>%
+  dplyr::rename("OTU_ID" = "gene") %>% 
+  mutate(TemporalEnrichment = case_when(p.adjusted < 0.05 & estimate > 0 ~ "Apr",
+                                        p.adjusted < 0.05 & estimate < 0 ~ "Aug",
+                                        p.adjusted >= 0.05 ~ "NS")) %>% 
+  left_join(select(vc.genome, Genome, VC, VC.Status), by = c("OTU_ID" = "Genome")) %>% 
+  left_join(select(vc.clstr, VC, ClstrComp:HostGenus))
+
+v.res.spatial <-  tidy(DESeq2::results(v.dds.cts, name = "Column")) %>%
+  dplyr::rename("OTU_ID" = "gene") %>% 
+  mutate(SpatialEnrichment = case_when(p.adjusted < 0.05 & estimate > 0 ~ "East-Enriched",
+                                        p.adjusted < 0.05 & estimate < 0 ~ "West-Enriched",
+                                        p.adjusted >= 0.05 ~ "NS")) %>% 
+  left_join(select(v.res.batch, OTU_ID, TemporalEnrichment), by = "OTU_ID") %>% 
+  left_join(select(vc.genome, Genome, VC, VC.Status), by = c("OTU_ID" = "Genome")) %>% 
+  left_join(select(vc.clstr, VC, ClstrComp:HostGenus))
+
+v.dds.bch <- DESeq2::DESeq(v.dds.cts, test = "LRT", reduced = ~ Month + Column)
+v.res.bch <- tidy(DESeq2::results(v.dds.bch)) %>%
+  dplyr::rename("OTU_ID" = "gene") %>% 
+  mutate(BiocharEffect = ifelse(p.adjusted < 0.05, "S", "NS")) %>% 
+  left_join(select(vc.genome, Genome, VC, VC.Status), by = c("OTU_ID" = "Genome")) %>% 
+  left_join(select(vc.clstr, VC, ClstrComp:HostGenus))
+```
+
+
+```{r}
+saveRDS(v.res.spatial, "../Data/v_deseq_spatial.RDS")
+saveRDS(v.res.batch, "../Data/v_deseq_batch.RDS")
+saveRDS(v.res.bch, "../Data/v_deseq_bch.RDS")
+```
+
+Get signficant vOTUs and save for supplementary tables
+```{r}
+v.sig.batch <- v.res.batch %>% 
+  filter(p.adjusted < 0.05) 
+
+v.sig.batch %>% 
+  group_by(TemporalEnrichment) %>% 
+  count()
+
+v.sig.spatial <- v.res.spatial %>% 
+  filter(p.adjusted < 0.05) 
+
+v.sig.spatial %>% 
+  group_by(SpatialEnrichment) %>% 
+  count()
+
+v.sig.bch <- v.res.bch %>% 
+  filter(p.adjusted < 0.05)
+
+dim(v.sig.bch)
+
+v.sig.batch
+v.sig.spatial
+v.sig.bch
+
+write.table(v.sig.batch, "../Tables/sig_vOTUs_time.tsv", sep = "\t", quote = F, row.names = F)
+write.table(v.sig.spatial, "../Tables/sig_vOTUs_spatial.tsv", sep = "\t", quote = F, row.names = F)
+write.table(v.sig.bch, "../Tables/sig_vOTUs_bch.tsv", sep = "\t", quote = F, row.names = F)
+```
+
+Let's do the same for the 16S count table
+
+Load data and format
+```{r}
+b.map <- filter(map, Extraction == "BULK" & Keep)
+b.tax <- readRDS("../Data/rrna_tax.RDS")
+
+b.otu.cts <- readRDS("../Data/rrna_otu_filt.RDS")
+b.otu.cts <- b.otu.cts[,colnames(b.otu.cts) %in% b.map$SampleID]
+b.otu.cts <- b.otu.cts[, match(b.map$SampleID, colnames(b.otu.cts))]
+b.otu.cts <- b.otu.cts[rowSums(b.otu.cts) > 0, ]
+```
+
+Since collection time point was the only significant factor in the 16S PERMANOVA, that's the only term included in the formula
+```{r}
+b.dds.cts <- DESeq2::DESeqDataSetFromMatrix(countData = b.otu.cts,
+                             colData = b.map,
+                             design = ~  Month)
+
+b.dds.cts <- DESeq2::DESeq(b.dds.cts)
+```
+
+Get results and annotate
+```{r}
+b.res.cts <- tidy(DESeq2::results(b.dds.cts, contrast = c("Month", "Apr", "Aug"))) %>%
+  dplyr::rename("OTU_ID" = "gene") %>% 
+  mutate(TemporalEnrichment = case_when(p.adjusted < 0.05 & estimate > 0 ~ "Apr",
+                                        p.adjusted < 0.05 & estimate < 0 ~ "Aug",
+                                        p.adjusted >= 0.05 | is.na(p.adjusted) ~ "NS")) %>% 
+  left_join(b.tax, by = "OTU_ID")
+
+saveRDS(b.res.cts, "../Data/16S_deseq_batch.RDS")
+```
+
+Get significant OTUs and save supplementary table
+```{r}
+b.sig.res <- b.res.cts %>% 
+  filter(p.adjusted < 0.05)
+
+b.sig.res %>% 
+  group_by(TemporalEnrichment) %>% 
+  count()
+
+write.table(b.sig.res, "../Tables/sig_16S_time.tsv", sep = "\t", quote = F, row.names = F)
+```
+

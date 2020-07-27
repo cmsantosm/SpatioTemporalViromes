@@ -1,0 +1,116 @@
+```{r}
+library(tidyverse)
+```
+
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+plot.des <- readRDS("../Data/plot_design.RDS")
+
+sampled.plots <- map %>% 
+  group_by(Position_x_mts, Position_y_mts, BchNtrFull, BchNtr, BiocharFull, NitrogenFull) %>% 
+  count() %>% 
+  select(-n) %>% 
+  mutate(BchNtrFull = str_remove(BchNtrFull, "itrogen")) %>% 
+  mutate(Group = paste(BchNtrFull, " (", BchNtr, ")", sep = "")) %>% 
+  ungroup() %>% 
+  mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
+  arrange(BiocharFull, NitrogenFull) %>% 
+  mutate(Rank = 1:nrow(.))
+```
+
+```{r}
+field.p <- plot.des %>% 
+  mutate(Nitrogen = case_when(Nitrogen == "H" ~ "225 lbs N/acre",
+                              Nitrogen == "L" ~ "150 lbs N/acre")) %>% 
+  ggplot(aes(Position_x_mts, Position_y_mts)) +
+  geom_tile(aes(fill = Nitrogen), color = "white", size = 1) +
+  geom_point(data = sampled.plots, aes(color = reorder(Group, Rank), shape = reorder(Group, Rank)), size = 5, stroke = 2) +
+  scale_fill_manual(values = c("gray75", "gray25")) +
+  scale_color_manual(name = "Treatment", values = RColorBrewer::brewer.pal(4, "Dark2")[c(1,1,2,2,3,3,4,4)]) +
+  scale_shape_manual(name = "Treatment", values = c(16,1,16,1,16,1,16,1)) +
+  xlab("Distance (m)\nWest-East") +
+  ylab("Distance (m)\nSouth-North") +
+  coord_fixed() +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank())
+
+field.p
+```
+
+```{r}
+map <- map %>% 
+  mutate(Month = fct_recode(Month, 
+                            "April" = "Apr",
+                            "August" = "Aug"),
+         Method = fct_recode(Method,
+                             "Total MG" = "Total Metagenome"),
+         LibraryPrep = fct_relevel(LibraryPrep, "TruSeq")) %>% 
+  inner_join(select(sampled.plots, BiocharFull, Rank))
+
+lib.prep <- map %>% 
+  ggplot(aes(Method, reorder(BchNtr, -Rank), fill = LibraryPrep)) +
+  geom_tile(color = "white", size = 1) +
+  geom_point(data = filter(map, !Keep), shape = 8, size = 5, stroke = 1, show.legend = F) +
+  scale_fill_manual(name = "Library Construction",
+                    values = RColorBrewer::brewer.pal(8, "Dark2")[c(5,6)]) +
+  guides(fill = guide_legend(title.position = "top",
+                             title.hjust = 0.5)) +
+  ylab("Treatment") + 
+  xlab("") +
+  facet_grid(. ~ Month) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "top")
+
+lib.prep
+```
+
+```{r}
+timeline <- tribble(
+  ~Event, ~Date,
+  "Biochar Addition", "2017-11-08",
+  "Apr Collection", "2018-04-23",
+  "Tomato Planting", "2018-05-02",
+  "N Addition", "2018-05-31",
+  "N Addition", "2018-06-13",
+  "N Addition", "2018-06-30",
+  "N Addition", "2018-07-18",
+  "N Addition", "2018-07-24",
+  "Aug Collection", "2018-08-28",
+  "Tomato Harvest", "2018-08-31"
+)
+
+timeline.p <- timeline %>% 
+  mutate(Order = 1:nrow(.)) %>% 
+  ggplot(aes(0, reorder(Date, -Order))) +
+  geom_vline(xintercept = - 0.005) +
+  geom_point(aes(x = -0.005, color = Event, fill = Event), shape = 25, size = 5, stroke = 1)+
+  geom_text(aes(label = Event, x = 0), angle = 0, hjust = 0) +
+  geom_text(aes(label = Date, x = -0.01), angle = 0, hjust = 1) +
+  xlim(-0.02,0.01) +
+  scale_color_manual(values = c("#66A61E", "#E6AB02","dodgerblue3","gray50","tomato2", "tomato2")) +
+  scale_fill_manual(values = c("#66A61E", "#E6AB02","dodgerblue3","gray50","tomato2", "tomato2")) +
+  theme_minimal() +
+  theme(text = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        legend.position = "none",
+        panel.grid = element_blank())
+  
+timeline.p
+```
+
+
+```{r}
+### 1298:517
+bottom <- cowplot::plot_grid(timeline.p, lib.prep, nrow = 1, rel_widths = c(2,1), labels = c("B", "C"), label_size = 20 )
+
+cowplot::plot_grid(field.p, bottom, nrow = 2, labels = c("A"), label_size = 30 )
+
+cowplot::plot_grid(field.p, timeline.p, lib.prep, nrow = 1, rel_widths = c(2,1,1), labels = c("A","B", "C"), label_size = 20 )
+```
+

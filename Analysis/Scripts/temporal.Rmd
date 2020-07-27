@@ -1,0 +1,241 @@
+```{r}
+source("../../General/general_functions.R")
+library(dendextend)
+library(ggdendro)
+library(tidyverse)
+```
+
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+v.map <- filter(map, Extraction == "VFD" & Keep) %>% 
+  mutate(Group = paste(Sample, Month, sep = "."))
+
+b.map <- filter(map, Extraction == "BULK" & Keep) %>% 
+  mutate(Group = paste(Sample, Month, sep = "."))
+
+v.otu <- readRDS("../Data/virome_tpm_75_mtx.RDS")
+v.otu <- v.otu[,colnames(v.otu) %in% v.map$SampleID]
+v.otu.ra <- rel_ab(v.otu)
+v.otu.tidy <- tidy_otu(v.otu.ra)
+
+b.otu <- readRDS("../Data/rrna_otu_filt.RDS")
+b.otu <- b.otu[,colnames(b.otu) %in% b.map$SampleID]
+b.otu.ra <- rel_ab(b.otu)
+b.otu.tidy <- tidy_otu(b.otu.ra)
+```
+
+```{r}
+v.dist <- vegan::vegdist(vegan::decostand(t(v.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
+v.map <- v.map[match(row.names(v.dist), v.map$SampleID),]
+row.names(v.dist) <- v.map$Group
+colnames(v.dist) <- v.map$Group
+
+b.dist <- vegan::vegdist(vegan::decostand(t(b.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
+b.map <- b.map[match(row.names(b.dist), b.map$SampleID),]
+row.names(b.dist) <- b.map$Group
+colnames(b.dist) <- b.map$Group
+
+b.dist <- b.dist[match(row.names(v.dist), row.names(b.dist)), match(colnames(v.dist), colnames(b.dist))]
+```
+
+```{r}
+vegan::mantel(as.dist(v.dist), as.dist(b.dist), permutations = 9999, method = "pearson") 
+```
+
+```{r}
+v.dd.row <- as.dendrogram(hclust(as.dist(v.dist)))
+b.dd.row <- as.dendrogram(hclust(as.dist(b.dist)))
+
+untang.dd <- dendlist(v.dd.row, b.dd.row) %>% 
+  untangle() 
+```
+
+```{r}
+v.ddata_x <- dendro_data(untang.dd[[1]])
+
+v.p2 <- ggplot(segment(v.ddata_x)) +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
+
+v.labs <- label(v.ddata_x) %>% 
+  inner_join(v.map, by = c("label" = "Group")) 
+
+v.dd <- v.p2 + 
+  geom_point(data=v.labs,
+             aes(x=x, y=0.05, fill = Month, shape = Month), size = 4, stroke = 1, color = "gray25") +
+  coord_flip(expand = T) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(6, "Paired")[3:4]) + 
+  scale_shape_manual(values = c(21,24)) +
+  theme_classic() +
+  facet_wrap(~ "vOTUs\n(Virome)") +
+  theme(text = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none") +
+  scale_y_reverse()
+
+v.dd
+```
+
+```{r}
+b.ddata_x <- dendro_data(untang.dd[[2]])
+
+b.p2 <- ggplot(segment(b.ddata_x)) +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
+
+b.labs <- label(b.ddata_x) %>% 
+  inner_join(b.map, by = c("label" = "Group")) 
+
+b.dd <- b.p2 + 
+  geom_point(data=b.labs,
+             aes(x=x, y=0.025, fill = Month, shape = Month), size = 4, stroke = 1, color = "gray25") +
+  coord_flip(expand = T) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(6, "Paired")[3:4]) + 
+  scale_shape_manual(values = c(21,24)) +
+  theme_classic() +
+  facet_wrap(~ "16S OTUs\n(Total MG)") +
+  theme(text = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none")
+
+b.dd
+```
+
+```{r}
+conx.p <- rbind(b.labs, v.labs) %>% 
+  mutate(y = ifelse(Extraction == "BULK", 2, 1)) %>% 
+  mutate(hjust = ifelse(Extraction == "BULK", 0, 1)) %>% 
+  ggplot(aes(y,x)) +
+  geom_text(aes(label = BchNtr, hjust = hjust, fill = Month)) +
+  geom_line(aes(group = label, color = Month), size = 1) +
+  scale_color_manual(values = RColorBrewer::brewer.pal(4, "Paired")[c(3,4)]) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(4, "Paired")[c(3,4)]) +
+  xlim(0.5,2.5) +
+  theme_minimal() +
+  theme(text = element_blank(),
+                legend.position = "none",
+        panel.grid = element_blank())
+
+conx.p
+
+dendro.p <- cowplot::plot_grid(v.dd, conx.p, b.dd, nrow = 1, align = "h", axis = "tb", rel_widths = c(2,3,2))
+dendro.p
+```
+
+
+```{r}
+v.dao <- readRDS("../Data/v_deseq_batch.RDS")
+b.dao <- readRDS("../Data/16S_deseq_batch.RDS")
+
+v.means <- v.dao %>% 
+  mutate(TemporalEnrichment = fct_relevel(TemporalEnrichment, "NS")) %>% 
+  inner_join(v.otu.tidy, by = "OTU_ID") %>% 
+  group_by(SampleID, TemporalEnrichment) %>% 
+  summarise(AggRelAb = sum(Count)) %>% 
+  inner_join(v.map, by = "SampleID") %>% 
+  group_by(Month, TemporalEnrichment) %>% 
+  summarise(MeanRelAb = mean(AggRelAb)) %>% 
+  mutate(Set = "vOTUs\n(Virome)")
+
+b.means <- b.dao %>% 
+  mutate(TemporalEnrichment = fct_relevel(TemporalEnrichment, "NS")) %>% 
+  inner_join(b.otu.tidy, by = "OTU_ID") %>% 
+  group_by(SampleID, TemporalEnrichment) %>% 
+  summarise(AggRelAb = sum(Count)) %>% 
+  inner_join(b.map, by = "SampleID") %>% 
+  group_by(Month, TemporalEnrichment) %>% 
+  summarise(MeanRelAb = mean(AggRelAb)) %>% 
+  mutate(Set = "16S OTUs\n(Total MG)")
+
+mean.ab.p <- rbind(v.means, b.means) %>% 
+  mutate(Set = fct_relevel(Set, "vOTUs\n(Virome)")) %>% 
+  ggplot(aes(Month, MeanRelAb, fill = TemporalEnrichment)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(values = c("gray", RColorBrewer::brewer.pal(6, "Paired")[3:4]),
+                    guide = guide_legend(title.hjust = 0.5,
+                                         title.vjust = 0.5,
+                                         title.position = "top")) +
+  ylab("Mean Rel. Abund.") +
+  facet_grid(. ~ Set) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.title.x = element_blank(),
+        legend.position = "bottom",
+        panel.border = element_blank())
+
+mean.ab.p
+```
+
+```{r}
+top <- cowplot::plot_grid(dendro.p, mean.ab.p + theme(legend.position = "none"), nrow = 1, rel_widths = c(8,6), labels = c("A", "B"), label_size = 20)
+top
+```
+
+This part of the code needs the mean.ab.p and nut.heat.p plots (both coming from the nutrients.Rmd notebook) to be loaded in the environment
+```{r}
+#679:708
+bottom <- cowplot::plot_grid(mean.ab.p, nut.heat.p, rel_widths = c(2,3))
+bottom
+
+cowplot::plot_grid(top, nut.heat.p, ncol = 1, rel_heights = c(9,11))
+```
+
+```{r}
+v.sig <- v.dao %>% 
+  filter(p.adjusted < 0.05) 
+
+b.sig <- b.dao %>% 
+  filter(p.adjusted < 0.05)
+
+a <- v.sig %>% 
+  filter(Family != "Unassigned" & !is.na(Family) & Family != "Mixed") %>% 
+  ggplot(aes(Family, fill = TemporalEnrichment)) +
+  geom_bar() +
+  scale_fill_manual(name = "Enrichment",
+                    values = RColorBrewer::brewer.pal(4, "Paired")[3:4]) +
+  ylab("Number of vOTUs") +
+  xlab("Virus Family") +
+  coord_flip() +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "top")
+
+a
+
+b <- v.sig %>% 
+  filter(HostPhylum != "Unassigned" & !is.na(HostPhylum) & HostPhylum != "Mixed") %>% 
+  ggplot(aes(HostPhylum, fill = TemporalEnrichment)) +
+  geom_bar() + 
+  scale_fill_manual(values = RColorBrewer::brewer.pal(4, "Paired")[3:4]) +
+  ylab("Number of vOTUs") +
+  xlab("Host Phylum") +
+  coord_flip() +
+  theme_light() +
+  theme(text = element_text(size = 15), 
+        legend.position = "none")
+b
+
+c <- b.sig %>% 
+  ggplot(aes(PhyClass, fill = TemporalEnrichment)) +
+  geom_bar() +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(4, "Paired")[3:4]) +
+  ylab("Number of 16S OTUs") +
+  xlab("Phylum / Proteobacteria Class") +
+  coord_flip() +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "none")
+
+c
+
+cowplot::plot_grid(a,b,c,
+                   ncol = 1,
+                   align = "v",
+                   rel_heights = c(1,1,2),
+                   labels = c("A", "B", "C"),
+                   label_size = 20)
+```

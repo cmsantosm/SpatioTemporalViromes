@@ -1,0 +1,178 @@
+```{r}
+source("../../General/general_functions.R")
+library(ggdendro)
+library(vegan)
+library(tidyverse)
+```
+
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+v.map <- filter(map, Extraction == "VFD" & Keep)
+b.map <- filter(map, Extraction == "BULK" & Keep)
+
+vfd.otu <- readRDS("../Data/virome_tpm_75_mtx.RDS")
+v.vfd.otu <- vfd.otu[,colnames(vfd.otu) %in% v.map$SampleID]
+v.vfd.otu <- v.vfd.otu[,match(colnames(v.vfd.otu), v.map$SampleID)] 
+v.vfd.otu.ra <- rel_ab(v.vfd.otu)
+
+rrna.otu <- readRDS("../Data/rrna_otu_filt.RDS")
+b.rrna.otu <- rrna.otu[,colnames(rrna.otu) %in% b.map$SampleID]
+b.rrna.otu <- b.rrna.otu[,match(colnames(b.rrna.otu), b.map$SampleID)]
+b.rrna.otu.ra <- rel_ab(b.rrna.otu)
+```
+
+
+```{r}
+v.vfd.dist <- vegan::vegdist(vegan::decostand(t(v.vfd.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
+
+b.rrna.dist <- vegan::vegdist(vegan::decostand(t(b.rrna.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
+```
+
+```{r}
+v.cap <- vegan::capscale(as.dist(v.vfd.dist) ~ Biochar + Condition(Month + Column), data = v.map, add = T, na.action = na.omit)
+
+v.cap.axes <- cap_axes(v.cap, v.map)
+v.cap.eig <- cap_eigval(v.cap, v.map)
+
+v.bch.cap.p <- v.cap.axes %>% 
+  mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
+  ggplot(aes(CAP1, CAP2, color = BiocharFull, shape = Month)) +
+  geom_point(size = 4, stroke = 1) +
+  xlab(paste("CAP1 (", v.cap.eig$Eigval[1], "%)", sep = "")) +
+  ylab(paste("CAP2 (", v.cap.eig$Eigval[2], "%)", sep = "")) +
+  scale_color_brewer(name = "Biochar", palette = "Dark2") +
+  theme_light() +
+  theme(text = element_text(size = 15))
+
+v.bch.cap.p
+
+# bch.legend <- cowplot::plot_grid(cowplot::get_legend(bch.cap.p), cowplot::get_legend(bch.hm.p), ncol = 1, rel_heights = c(5,2))
+# 
+# cowplot::plot_grid(bch.cap.p + theme(legend.position = "none"), bch.right, bch.legend, nrow = 1, rel_widths = c(2,1,1), labels = c("A","B"), label_size = 30)
+```
+
+```{r}
+b.cap <- vegan::capscale(as.dist(b.rrna.dist) ~ Biochar + Condition(Month), data = b.map, add = T, na.action = na.omit)
+
+b.cap.axes <- cap_axes(b.cap, b.map)
+b.cap.eig <- cap_eigval(b.cap, b.map)
+
+b.bch.cap.p <- b.cap.axes %>% 
+  mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
+  ggplot(aes(CAP1, CAP2, color = BiocharFull, shape = Month)) +
+  geom_point(size = 4, stroke = 1) +
+  xlab(paste("CAP1 (", b.cap.eig$Eigval[1], "%)", sep = "")) +
+  ylab(paste("CAP2 (", b.cap.eig$Eigval[2], "%)", sep = "")) +
+  scale_color_brewer(name = "Biochar", palette = "Dark2") +
+  theme_light() +
+  theme(text = element_text(size = 15))
+
+b.bch.cap.p
+```
+
+```{r}
+sig.bch <- readRDS("../Data/v_deseq_bch.RDS") %>% filter(p.adjusted < 0.05)
+
+tidy.otu <- v.vfd.otu.ra %>% 
+  tidy_otu()
+
+bch.mtx <- tidy.otu %>% 
+  filter(OTU_ID %in% sig.bch$OTU_ID) %>% 
+  group_by(OTU_ID) %>% 
+  mutate(zValue = (Count - mean(Count))/sd(Count)) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  group_by(Biochar2, OTU_ID) %>% 
+  summarise(MeanZS = mean(zValue)) %>% 
+  spread(key = OTU_ID, value = MeanZS) %>% 
+  as.data.frame()
+  
+row.names(bch.mtx) <- bch.mtx$Biochar2
+bch.mtx <- bch.mtx[,-1]
+bch.mtx <- as.matrix(bch.mtx)
+
+bch.dist <- dist(bch.mtx)
+otu.dist <- dist(t(bch.mtx))
+
+bch.dist
+
+bch.dd <- as.dendrogram(hclust(as.dist(bch.dist), method = "complete"))
+bch.ddata_x <- dendro_data(bch.dd)
+bch.labs <- label(bch.ddata_x) %>% 
+  rename("Biochar" = "label") %>% 
+  rename("BiocharOrder" = "x")
+
+otu.dd <- as.dendrogram(hclust(as.dist(otu.dist), method = "complete"))
+otu.ddata_x <- dendro_data(otu.dd)
+otu.labs <- label(otu.ddata_x) %>% 
+  rename("OTU_ID" = "label") %>% 
+  rename("OTUOrder" = "x")
+
+bch.hm.p <- tidy.otu %>% 
+  filter(OTU_ID %in% sig.bch$OTU_ID) %>% 
+  group_by(OTU_ID) %>% 
+  mutate(zValue = (Count - mean(Count))/sd(Count)) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  group_by(Biochar2, OTU_ID) %>% 
+  summarise(MeanZS = mean(zValue)) %>% 
+  rename("Biochar" = "Biochar2") %>% 
+  inner_join(select(bch.labs, Biochar, BiocharOrder), by = "Biochar") %>% 
+  inner_join(select(otu.labs, OTU_ID, OTUOrder), by = "OTU_ID") %>% 
+  ggplot(aes(reorder(Biochar, BiocharOrder), reorder(OTU_ID, OTUOrder), fill = MeanZS)) +
+  geom_tile() +
+  ylab("vOTU") +
+  scale_fill_distiller(name = "Mean Rel. Abund.\n(z-score)",palette = "Greys",
+                       guide = guide_colorbar(title.hjust = 0,
+                                              title.position = "top",
+                                              label.theme = element_text(angle = 90, hjust = 1))) +
+  theme_minimal() +
+  theme(text = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        legend.position = "bottom")
+
+bch.dd.p <- ggplot(segment(bch.ddata_x)) +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
+
+bch.dd.labs <- label(bch.ddata_x) %>% 
+  mutate(label = fct_relevel(label, "AS", "CS", "PN", "NB"))
+
+bch.dendo.p <- bch.dd.p + 
+  geom_point(data=bch.dd.labs,
+             aes(x=x, y=1, color = label), size = 4, shape = 15) +
+  scale_color_brewer(name = "Biochar", palette = "Dark2") +
+  xlim(0.5, 4.5) +
+  theme_classic() +
+  theme(text = element_text(size = 15),
+        #legend.text = element_text(size = 15),
+        #legend.title = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none")
+```
+
+
+```{r}
+left <- cowplot::plot_grid(v.bch.cap.p + theme(legend.position = "none"), 
+                           b.bch.cap.p + theme(legend.position = "none"), 
+                           nrow = 2,
+                           labels = c("A","B"), 
+                           label_size = 20)
+left
+
+right <- cowplot::plot_grid(bch.dendo.p, 
+                            bch.hm.p + theme(legend.position = "none"), 
+                            ncol = 1, 
+                            align = "v", axis = "r", 
+                            rel_heights = c(1,4),
+                            labels = c("C"), 
+                            label_size = 20)
+
+right
+
+bch.legend <- cowplot::plot_grid(cowplot::get_legend(v.bch.cap.p), cowplot::get_legend(bch.hm.p), ncol = 1, rel_heights = c(5,2))
+
+cowplot::plot_grid(left, right, bch.legend, nrow = 1, rel_widths = c(2,1,1))
+```
+

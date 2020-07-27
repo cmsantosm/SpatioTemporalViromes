@@ -1,0 +1,196 @@
+Load libraries
+```{r}
+library(vegan)
+library(ggforce)
+library(eulerr)
+library(tidyverse)
+```
+Load data
+```{r}
+otu <- readRDS("../Data/virome_tpm_75_mtx.RDS")
+otu.tidy <- readRDS("../Data/virome_tpm_75_tidy.RDS")
+map <- readRDS("../Data/full_map.RDS") %>% filter(Keep)
+pal <- c(RColorBrewer::brewer.pal(9, "Reds")[6],RColorBrewer::brewer.pal(9, "Blues")[6])
+```
+
+Separate virome and total metagenome (bulk) datasets
+```{r}
+v.map <- filter(map, Extraction == "VFD")
+v.ids <- readRDS("../Data/vir_ids.RDS")
+
+v.otu.tidy <- otu.tidy %>% 
+  inner_join(v.map, by = "SampleID")
+v.otu <- otu[rownames(otu) %in% v.ids, colnames(otu) %in% v.map$SampleID]
+v.otu <- v.otu[rowSums(v.otu)>0,]
+
+
+b.map <- filter(map, Extraction == "BULK")
+b.ids <- readRDS("../Data/bulk_ids.RDS")
+  
+b.otu.tidy <- otu.tidy %>% 
+  inner_join(b.map, by = "SampleID")
+b.otu <- otu[rownames(otu) %in% b.ids, colnames(otu) %in% b.map$SampleID] 
+b.otu <- b.otu[rowSums(b.otu)>0,]
+
+```
+
+Get the accumulation curves for both datasets
+```{r}
+v.sp <- specaccum(t(v.otu), method = "random", permutations = 100)
+
+v.perm <- v.sp$perm
+
+v.perm.tidy <- as.tibble(v.perm) %>% 
+  mutate(Sites = 1:nrow(.)) %>% 
+  gather(key = "Permutation", value = "Species", -Sites) 
+
+v.richness <- data.frame(Sites = v.sp$sites, Species = v.sp$richness)
+
+b.sp <- specaccum(t(b.otu), method = "random", permutations = 100)
+
+b.perm <- b.sp$perm
+
+b.perm.tidy <- as.tibble(b.perm) %>% 
+  mutate(Sites = 1:nrow(.)) %>% 
+  gather(key = "Permutation", value = "Species", -Sites) 
+
+b.richness <- data.frame(Sites = b.sp$sites, Species = b.sp$richness)
+```
+
+Plot accumulation curves
+```{r}
+perm.tidy <- rbind(mutate(b.perm.tidy, Extraction = "Total MG"),
+                   mutate(v.perm.tidy, Extraction = "Virome"))
+
+richness <- rbind(mutate(b.richness, Extraction = "Total MG"),
+                  mutate(v.richness, Extraction = "Virome"))
+
+acc.p <- ggplot(perm.tidy, aes(Sites, Species, color = Extraction)) +
+  geom_point(alpha = 0.2) +
+  geom_line(data = richness, size = 1) +
+  facet_zoom2(y = Extraction == "Total MG", zoom.size = 1, show.area = T) +
+  scale_color_manual(name = "", values = pal) +
+  xlim(0,16) +
+  ylab("Cumulative Richness\n(Number of vOTUs)") +
+  xlab("Sampling Effort (Number of Samples)") +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "top",
+        panel.border = element_blank()) 
+
+acc.p
+```
+
+Plot euler diagram
+```{r}
+euler.p <- plot(euler(list("Total\nMG" = b.ids, Virome = v.ids)),
+     fills = pal[c(1,2,1)],
+     edges = list(col = c("white", "white"), lex = 2),
+     labels = list(fontfamily = "Helvetica",
+                   col = c("white", "white", "black"),
+                   cex = 1),
+     quantities = list(fontfamily = "Helvetica",
+                   col = c("black", "white", "white"),
+                   cex = 1))
+
+euler.p
+```
+
+Calculate occupancy and abundance within month subsets (occ.df.month) and identify which OTUs were present in each month for both profiling methods (sets.per.month)
+```{r}
+sets.per.month <- otu.tidy %>% 
+  inner_join(map, by = "SampleID") %>% 
+  filter(Abundance > 0) %>% 
+  group_by(Method, Month, OTU_ID) %>% 
+  count() %>% 
+  group_by(Month, OTU_ID) %>% 
+  mutate(Total = n()) %>% 
+  ungroup() %>% 
+  mutate(Set = ifelse(Total == "2", "Both", Method)) %>% 
+  group_by(Month, OTU_ID, Set) %>% 
+  count() %>% 
+  select(-n)
+
+occ.df.month <- v.otu.tidy %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAbundance = Abundance/sum(Abundance)) %>% 
+  group_by(Month, OTU_ID) %>% 
+  summarise(Occupancy = sum(Abundance > 0), 
+            Occupancy2 = sum(Abundance > 0)/n() * 100,
+            MeanAbundance = mean(RelAbundance),
+            MeanRelAbundance = mean(RelAbundance)) %>% 
+  filter(Occupancy > 0) %>% 
+  inner_join(sets.per.month, by = c("Month", "OTU_ID"))
+```
+
+Plot abundance-occupancy curve
+```{r}
+curve.p <- occ.df.month %>% 
+  ggplot(aes(MeanAbundance, Occupancy2)) +
+  geom_jitter(data = filter(occ.df.month, Set == "Virome"), color = pal[2], alpha = 0.5) +
+  geom_jitter(data = filter(occ.df.month, Set == "Both"), color = "white", fill = pal[1], shape = 21) +
+  xlab("Mean Rel. Abund. (log10)") +
+  ylab("Occupancy\n(% Samples)") + 
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank())
+
+curve.p
+```
+Plot occupancy levels
+```{r}
+occ.p <- occ.df.month %>% 
+  mutate(Set = fct_relevel(Set, "Virome")) %>% 
+  group_by(Set, Occupancy2) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(pOTU = n/sum(n) * 100) %>% 
+  ggplot(aes(Occupancy2, pOTU, fill = Set, color = Set)) +
+  geom_bar(stat = "identity", color = "white", size = 0.25) +
+  scale_fill_brewer(palette = "Set1", direction = -1) +
+  scale_color_manual(values = c(RColorBrewer::brewer.pal(3, "Set1")[2],"gray25")) +
+  scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
+  coord_flip() +
+  ylab("% vOTUs") +
+  
+  theme_light() +
+  theme(text = element_text(size = 15), 
+        #axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "none")
+occ.p
+```
+Plot abundance density plots
+```{r}
+ab.p <- occ.df.month %>% 
+  ggplot(aes(MeanAbundance)) +
+  geom_density(fill = pal[2], color = pal[2]) +
+  #geom_density(data = filter(occ.df.month, OTU_ID %in% b.ids), fill = pal[1], color = "black", alpha = 0.8, size = 1) +
+  geom_density(data = filter(occ.df.month, Set == "Both"), fill = pal[1], color = "white", alpha = 0.8) +
+  xlab("Mean Abundance (log10)") +
+  ylab("Density") +
+  scale_y_continuous() +
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.y= element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_blank())
+ab.p
+```
+Make final figure
+```{r}
+left <- cowplot::plot_grid(ab.p, curve.p, nrow = 2, align = "v", rel_heights = c(1,2), labels = "B", label_size = 20)
+left
+
+right <- cowplot::plot_grid(euler.p, occ.p, nrow = 2, rel_heights = c(1,2), labels = "C", label_size = 20)
+right
+
+bottom <- cowplot::plot_grid(left, right, nrow = 1, align = "h", axis = "tb", rel_widths = c(3,2))
+bottom
+
+###666:795
+cowplot::plot_grid(acc.p, bottom, nrow = 2, rel_heights = c(7, 10), labels = "A", label_size = 20)
+```

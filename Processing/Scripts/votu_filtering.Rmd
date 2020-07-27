@@ -1,0 +1,113 @@
+Load libraries
+```{r}
+library(tidyverse)
+```
+
+Get the name of the files
+```{r}
+bed.dir <- "../Data/Mapping/" 
+bed.files <- list.files(path = bed.dir, pattern = "*bed.tsv", full.names = T)
+bed.files
+
+sampleid <- list.files(path = bed.dir, pattern = "*bed.tsv", full.names = F) %>% 
+  str_remove(".vir.bed.tsv")
+sampleid
+```
+
+Open the files
+```{r}
+bed.list <- lapply(bed.files, read.table, sep = "\t", header = F, col.names = c("contig", "start", "end", "coverage"))
+names(bed.list) <- sampleid
+```
+
+Function to get coverage for each vOTUs in each bed file and filter out instances in which coverage is < 0.75
+```{r}
+get_coverage <- function(df) {
+  df %>% 
+    mutate(nbase = end - start) %>% 
+    group_by(contig) %>% 
+    mutate(length = sum(nbase)) %>% 
+    mutate(perc_seq = nbase/length) %>% 
+    filter(coverage > 0) %>% 
+    summarise(total_coverage = sum(perc_seq)) %>% 
+    filter(total_coverage >= 0.75)
+}
+```
+
+Apply the function to all bed files
+```{r}
+cov.list <- lapply(bed.list, get_coverage)
+cov.list
+```
+
+Make the list into a data frame
+```{r}
+cov.df <- plyr::ldply(cov.list, function(x) x) %>% 
+  rename("SampleID" = ".id")
+cov.df 
+```
+
+Convert it to a matrix
+```{r}
+cov.mtx <- cov.df %>% 
+  spread(key = SampleID, value = total_coverage) %>% 
+  as.data.frame() 
+
+row.names(cov.mtx) <- cov.mtx$contig
+cov.mtx <- cov.mtx[,-1]
+cov.mtx
+```
+
+Remova NAs
+```{r}
+cov.mtx
+cov.mtx <- !is.na(cov.mtx)
+```
+
+Get the tpmean table generated from BAMM and keep only those instances where coverage ≥ 0.75
+```{r}
+tpmean <- read.table("../Data/Mapping/biochar.vir.tpmean.tsv", header = T, sep = "\t", row.names = 1)
+tpmean <- tpmean[,-1]
+tpmean
+
+tmp <- colnames(tpmean)
+tmp  <-  str_remove(tmp, ".vir.sortedIndexed.bam")
+colnames(tpmean) <- tmp
+
+tpmean.75 <- tpmean[match(row.names(cov.mtx), row.names(tpmean)), match(colnames(cov.mtx), colnames(tpmean))]
+tpmean.75 <- cov.mtx * tpmean.75
+tpmean.75.tidy <- tpmean.75 %>% 
+  as.data.frame() %>% 
+  mutate(OTU_ID = row.names(.)) %>% 
+  gather(key = "SampleID", value = "Abundance", -OTU_ID) %>% 
+  select(SampleID, everything())
+```
+
+Get the count table generated from BAMM and keep only those instances where coverage ≥ 0.75
+```{r}
+count <- read.table("../Data/Mapping/biochar.vir.counts.tsv", header = T, sep = "\t", row.names = 1)
+count <- count[,-1]
+count
+
+tmp <- colnames(count)
+tmp  <-  str_remove(tmp, ".vir.sortedIndexed.bam")
+colnames(count) <- tmp
+
+count.75 <- count[match(row.names(cov.mtx), row.names(count)), match(colnames(cov.mtx), colnames(count))]
+count.75 <- cov.mtx * count.75
+count.75.tidy <- count.75 %>% 
+  as.data.frame() %>% 
+  mutate(OTU_ID = row.names(.)) %>% 
+  gather(key = "SampleID", value = "Abundance", -OTU_ID) %>% 
+  select(SampleID, everything())
+```
+
+Save formatted tables in the Analysis folder
+```{r}
+saveRDS(tpmean.75, "../../Analysis/Data/virome_tpm_75_mtx.RDS")
+saveRDS(tpmean.75.tidy, "../../Analysis/Data/virome_tpm_75_tidy.RDS")
+
+saveRDS(count.75, "../../Analysis/Data/virome_count_75_mtx.RDS")
+saveRDS(count.75.tidy, "../../Analysis/Data/virome_count_75_tidy.RDS")
+```
+

@@ -1,0 +1,32 @@
+SampleID	Method	Month	Column	Row	BiocharFull	NitrogenFull	LibraryPrep	RawReads	FilteredReads
+B0H_BULK_S59_L006	Total MG	Apr	4	5	No Biochar	High Nitrogen	Ligation	10605380	7810036
+B0L_BULK_S58_L006	Total MG	Apr	2	7	No Biochar	Low Nitrogen	Ligation	12223277	8753699
+B2R2H_BULK_S61_L006	Total MG	Apr	4	1	Coconut Shell	High Nitrogen	Ligation	12828950	9378185
+B2R2L_BULK_S60_L006	Total MG	Apr	2	9	Coconut Shell	Low Nitrogen	Ligation	11553631	8411641
+B3R2H_BULK_S65_L006	Total MG	Apr	1	9	Pine Needle	High Nitrogen	Ligation	12185118	8874972
+B3R2L_BULK_S62_L006	Total MG	Apr	3	1	Pine Needle	Low Nitrogen	Ligation	11548448	8405384
+B8R2H_BULK_S63_L006	Total MG	Apr	1	6	Almond Shell	High Nitrogen	Ligation	11592275	8335654
+B8R2L_BULK_S64_L006	Total MG	Apr	3	2	Almond Shell	Low Nitrogen	Ligation	13400268	9958550
+B0H_VFD_S52_L006	Virome	Apr	4	5	No Biochar	High Nitrogen	Ligation	13610642	9602461
+B0L_VFD_S51_L006	Virome	Apr	2	7	No Biochar	Low Nitrogen	Ligation	13590319	9783850
+B2R2H_VFD_S54_L006	Virome	Apr	4	1	Coconut Shell	High Nitrogen	Ligation	13088989	9318393
+B2R2L_VFD_S53_L006	Virome	Apr	2	9	Coconut Shell	Low Nitrogen	Ligation	13423793	9794046
+B3R2H_VFD_S55_L006	Virome	Apr	1	9	Pine Needle	High Nitrogen	Ligation	12731921	9287278
+B8R2H_VFD_S57_L006	Virome	Apr	1	6	Almond Shell	High Nitrogen	Ligation	13678262	10131404
+B8R2L_VFD_S56_L006	Virome	Apr	3	2	Almond Shell	Low Nitrogen	Ligation	12186646	8719191
+B0H_BULK_S142_L006	Total MG	Aug	4	5	No Biochar	High Nitrogen	Tagmentation	29679163	13995566
+B0L_BULK_S141_L006	Total MG	Aug	2	7	No Biochar	Low Nitrogen	Tagmentation	31825835	15757191
+B2R2H_BULK_S144_L006	Total MG	Aug	4	1	Coconut Shell	High Nitrogen	Tagmentation	34093911	16716082
+B2R2L_BULK_S143_L006	Total MG	Aug	2	9	Coconut Shell	Low Nitrogen	Tagmentation	22808888	10691370
+B3R2H_BULK_S146_L006	Total MG	Aug	1	9	Pine Needle	High Nitrogen	Tagmentation	31049952	14913139
+B3R2L_BULK_S145_L006	Total MG	Aug	3	1	Pine Needle	Low Nitrogen	Tagmentation	26317777	12562029
+B8R2H_BULK_S148_L006	Total MG	Aug	1	6	Almond Shell	High Nitrogen	Tagmentation	33263726	16583654
+B8R2L_BULK_S147_L006	Total MG	Aug	3	2	Almond Shell	Low Nitrogen	Tagmentation	28655565	15194016
+B0H_VFD_S134_L006	Virome	Aug	4	5	No Biochar	High Nitrogen	Tagmentation	12922250	7106287
+B0L_VFD_S133_L006	Virome	Aug	2	7	No Biochar	Low Nitrogen	Tagmentation	10717776	4292471
+B2R2H_VFD_S136_L006	Virome	Aug	4	1	Coconut Shell	High Nitrogen	Tagmentation	5167932	1901289
+B2R2L_VFD_S135_L006	Virome	Aug	2	9	Coconut Shell	Low Nitrogen	Tagmentation	10854167	5636299
+B3R2H_VFD_S138_L006	Virome	Aug	1	9	Pine Needle	High Nitrogen	Tagmentation	14596703	7993760
+B3R2L_VFD_S137_L006	Virome	Aug	3	1	Pine Needle	Low Nitrogen	Tagmentation	12810928	6471017
+B8R2H_VFD_S140_L006	Virome	Aug	1	6	Almond Shell	High Nitrogen	Tagmentation	13410762	6019232
+B8R2L_VFD_S139_L006	Virome	Aug	3	2	Almond Shell	Low Nitrogen	Tagmentation	12075960	6742997

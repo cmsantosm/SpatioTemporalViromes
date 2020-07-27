@@ -1,0 +1,284 @@
+```{r}
+library(GGally)
+library(cowplot)
+library(tidyverse)
+```
+
+
+```{r}
+nodes <- readRDS("../Data/ntwk_nodes.RDS")
+edges <- readRDS("../Data/ntwk_edges.RDS")
+clstr.master <- readRDS("../Data/cluster_vc_master.RDS")
+genome.master <- readRDS("../Data/genome_vc_master.RDS")
+refseq.all <- readRDS("../Data/refseq_host_tax.RDS")
+```
+
+```{r}
+otu <- readRDS("../Data/virome_count_75_mtx.RDS")
+map <- readRDS("../Data/full_map.RDS")
+map <- filter(map, Keep)
+
+otu <- otu[, colnames(otu) %in% map$SampleID]
+otu <- otu[rowSums(otu)> 0, ]
+dim(otu)  
+
+b.ids <- readRDS("../Data/bulk_ids.RDS") 
+b.ids <- b.ids[b.ids %in% rownames(otu)]
+
+v.ids <- readRDS("../Data/vir_ids.RDS")
+v.ids <- v.ids[v.ids %in% rownames(otu)]
+
+length(v.ids)
+length(b.ids)
+
+b.only.ids <- b.ids[!b.ids %in% v.ids]
+b.shared.ids <- b.ids[b.ids %in% v.ids]
+```
+
+```{r}
+clstrd.nodes <- nodes %>% 
+  left_join(genome.master, by = "Genome") %>% 
+  filter(VC.Status == "Clustered")
+
+ntwk.p <- clstrd.nodes %>% 
+  ggplot(aes(x, y)) +
+  geom_line(data = filter(edges, Genome %in% clstrd.nodes$Genome), aes(group = Pair), color = "black", size = 0.5, alpha = 0.1) +
+  geom_point(data = filter(clstrd.nodes, !Genome %in% c(v.ids, b.ids)), alpha = 0.8, shape = 16, size = 2, color = "gray") +
+  geom_point(data = filter(clstrd.nodes, Genome %in% v.ids), alpha = 0.8, shape = 16, size = 2, color = RColorBrewer::brewer.pal(9, "Blues")[6]) +
+  geom_point(data = filter(clstrd.nodes, Genome %in% b.only.ids), alpha = 0.8, shape = 21, size = 2, fill = RColorBrewer::brewer.pal(9, "Reds")[6], color = "black") +
+  geom_point(data = filter(clstrd.nodes, Genome %in% b.shared.ids), alpha = 0.8, shape = 21, size = 2, fill = RColorBrewer::brewer.pal(9, "Reds")[6], color = "white") +
+  theme_minimal() +
+  theme(text = element_text(size = 15), 
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "bottom")
+
+ntwk.p
+```
+
+```{r}
+legend.p <- data.frame(Type = c("RefSeq", "Total MG", "Virome"),
+           Value = 1:3) %>% 
+  ggplot(aes(1, Value, color = Type)) +
+  geom_point(size = 5) +
+  scale_color_manual(name = "Source", values = c("gray",RColorBrewer::brewer.pal(9, "Reds")[6], RColorBrewer::brewer.pal(9, "Blues")[6])) +
+  theme_minimal() +
+  theme(text = element_text(size = 15),
+        legend.position = "right")
+
+legend.p
+```
+```{r}
+vc.p <- genome.master %>%
+  mutate(BULK = Genome %in% b.ids,
+         VFD = Genome %in% v.ids,
+         REFSEQ = Source == "refseq") %>% 
+  gather(key = "Extraction", value = "Value", BULK:REFSEQ) %>% 
+  filter(Value) %>% 
+  filter(VC != "") %>% 
+  filter(Extraction != "REFSEQ") %>% 
+  group_by(Extraction, VC) %>% 
+  count() %>% 
+  ungroup() %>% 
+  select(Extraction) %>% 
+  group_by(Extraction) %>% 
+  count() %>% 
+  mutate(Extraction = fct_recode(Extraction,
+                                 "RefSeq" = "REFSEQ",
+                                 "Total MG" = "BULK",
+                                 "Virome" = "VFD")) %>% 
+  mutate(Extraction = fct_relevel(Extraction, "RefSeq", after = Inf)) %>% 
+  ggplot(aes(Extraction, n, fill = Extraction)) +
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(values = c(RColorBrewer::brewer.pal(9, "Reds")[6], RColorBrewer::brewer.pal(9, "Blues")[6], "grey")) +
+  #coord_flip()+
+  ylab("Number\nof VCs") +
+  theme_minimal() +
+  theme(text = element_text(size = 15), 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        legend.position = "none")
+  
+vc.p
+```
+```{r}
+host.phy.clust <- genome.master %>% 
+  filter(Source == "biochar") %>% 
+  select(Genome, VC, VC.Status) %>% 
+  inner_join(clstr.master, by = "VC") %>% 
+  filter(ClstrComp == "both") %>% 
+  group_by(HostPhylum) %>% 
+  count() %>% 
+  ungroup() 
+
+
+host.phy.clust
+
+host.phy.nodes <- clstrd.nodes %>% 
+  left_join(select(clstr.master, VC, ClstrComp), by = "VC") %>% 
+  left_join(refseq.all, by = "Genome") %>% 
+  mutate(HostPhylum2 = case_when(Source == "biochar" ~ "This Study",
+                                HostPhylum %in% host.phy.clust$HostPhylum ~ HostPhylum,
+                                TRUE ~ "Other")) %>% 
+  mutate(HostPhylum2 = fct_relevel(HostPhylum2, "Proteobacteria", "Actinobacteria", "Bacteroidetes","Firmicutes", "Other", "This Study", after = Inf)) %>% 
+   filter(Source == "refseq" | ClstrComp == "both")
+
+ntwk.host <- host.phy.nodes %>% 
+  ggplot(aes(x, y)) +
+  geom_line(data = filter(edges, Genome %in% host.phy.nodes$Genome), aes(group = Pair), alpha = 0.1, color = "gray25", size = 0.5) +
+  geom_point(alpha = 0.8, size = 2, shape = 16, aes(color = HostPhylum2)) +
+  scale_color_manual(name = "Host Phylum", values = c(RColorBrewer::brewer.pal(4, "Set2")[c(4,1,2,3)], "gray75", "gray10")) +
+  theme_minimal() +
+  theme(text = element_text(size = 15), 
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "right")
+
+ntwk.host
+```
+
+```{r}
+host.bar.p <- genome.master %>% 
+  filter(Source == "biochar") %>% 
+  select(Genome, VC, VC.Status) %>% 
+  inner_join(clstr.master, by = "VC") %>% 
+  filter(ClstrComp == "both") %>% 
+  mutate(BULK = Genome %in% b.ids,
+         VFD = Genome %in% v.ids) %>% 
+  gather(key = "Extraction", value = "Value", BULK:VFD) %>% 
+  filter(Value) %>% 
+  group_by(Extraction, HostPhylum) %>% 
+  count() %>% 
+  filter(HostPhylum != "Mixed") %>% 
+  group_by(Extraction) %>% 
+  mutate(Total = sum(n)) %>% 
+  mutate(Extraction = fct_recode(Extraction, 
+                                 "Total MG" = "BULK",
+                                 "Virome" = "VFD")) %>% 
+  mutate(Extraction2 = paste(Extraction, " (" ,Total, ")", sep = "")) %>% 
+  mutate(HostPhylum = fct_relevel(HostPhylum, "Proteobacteria", "Actinobacteria", "Bacteroidetes","Firmicutes")) %>% 
+  ggplot(aes(Extraction, n, fill = HostPhylum)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(name = "Host Phylum", values = c(RColorBrewer::brewer.pal(4, "Set2")[c(4,1,2,3)], "gray75", "gray10")) +
+  ylab("Number\nof vOTUs") +
+  #coord_flip() +
+  theme_minimal() +
+  theme(text = element_text(size = 15),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        legend.position = "none")
+
+host.bar.p
+```
+```{r}
+vir.fam.clust <- genome.master %>% 
+  filter(Source == "biochar") %>% 
+  select(Genome, VC, VC.Status) %>% 
+  inner_join(clstr.master, by = "VC") %>% 
+  filter(ClstrComp == "both") %>% 
+  mutate(Family = fct_recode(Family, "Unassigned" = "Mixed")) %>% 
+  filter(Order != "Unassigned") %>% 
+  group_by(Order, Family) %>% 
+  count() %>% 
+  group_by(Order) %>% 
+  mutate(nOrd = sum(n)) %>% 
+  arrange(nOrd, n) %>% 
+  ungroup() %>% 
+  mutate(Rank = 1:n()) %>% 
+  mutate(Family = ifelse(Order == "Caudovirales" & Family == "Unassigned", "Unclassified Caudovirales", as.character(Family))) %>% 
+  mutate(Family = fct_relevel(Family,
+                              "Podoviridae",
+                              "Siphoviridae",
+                              "Myoviridae",
+                              "Unclassified Caudovirales")) 
+
+vir.fam.clust   
+
+vir.fam.nodes <- clstrd.nodes %>% 
+  left_join(select(clstr.master, VC, ClstrComp), by = "VC") %>% 
+  left_join(refseq.all, by = "Genome") %>% 
+  mutate(Family2 = case_when(Source == "biochar" ~ "This Study",
+                                Family %in% vir.fam.clust$Family ~ as.character(Family),
+                                TRUE ~ "Other")) %>% 
+  mutate(Family2 = fct_relevel(Family2,
+                              "Podoviridae",
+                              "Siphoviridae",
+                              "Myoviridae",
+                              "Unclassified Caudovirales",
+                              "Other",
+                              "This Study")) %>% 
+  left_join(vir.fam.clust, by = c("Family2" = "Family")) %>% 
+  filter(Source == "refseq" | ClstrComp == "both")
+
+ntwk.vir <-  vir.fam.nodes %>% 
+  ggplot(aes(x, y)) +
+  geom_line(data = filter(edges, Genome %in% vir.fam.nodes$Genome), aes(group = Pair), alpha = 0.1, color = "gray25", size = 0.5) +
+  geom_point(alpha = 0.8, size = 2, shape = 16, aes(color = Family2)) +
+  scale_color_manual(name = "Virus Family",
+                    values = c(RColorBrewer::brewer.pal(8, "Set2")[c(5,6,7)],"gray75", "gray10")) +
+  theme_minimal() +
+  theme(text = element_text(size = 15), 
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "right")
+
+ntwk.vir
+```
+
+
+```{r}
+vir.fam.p <- genome.master %>% 
+  filter(Source == "biochar") %>% 
+  select(Genome, VC, VC.Status) %>% 
+  inner_join(clstr.master, by = "VC") %>% 
+  filter(ClstrComp == "both") %>% 
+  mutate(Family = fct_recode(Family, "Unassigned" = "Mixed")) %>% 
+  filter(Order != "Unassigned") %>% 
+  mutate(BULK = Genome %in% b.ids,
+         VFD = Genome %in% v.ids) %>% 
+  gather(key = "Extraction", value = "Value", BULK:VFD) %>% 
+  filter(Value) %>% 
+  group_by(Extraction, Order, Family) %>% 
+  count() %>% 
+  filter(Family != "Unassigned") %>% 
+  group_by(Extraction) %>% 
+  mutate(Total = sum(n)) %>% 
+  mutate(Extraction = fct_recode(Extraction, 
+                                 "Total MG" = "BULK",
+                                 "Virome" = "VFD")) %>% 
+  mutate(Extraction2 = paste(Extraction, " (" ,Total, ")", sep = "")) %>% 
+  mutate(Family = fct_relevel(Family,
+                              "Podoviridae",
+                              "Siphoviridae",
+                              "Myoviridae")) %>% 
+  ggplot(aes(Extraction, n, fill = Family)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(name = "Virus Family",
+                    values = c(RColorBrewer::brewer.pal(8, "Set2")[c(5,6,7)],"gray75", "gray10")) +
+  ylab("Number\nof vOTUs") +
+  #coord_flip() +
+  theme_minimal() +
+  theme(text = element_text(size = 15),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        legend.position = "none") 
+
+vir.fam.p
+```
+```{r}
+#619:1178
+whole.bar <- plot_grid(get_legend(legend.p), vc.p, ncol = 1, rel_heights = c(4,5))
+whole <- plot_grid(ntwk.p, whole.bar, rel_widths = c(2,1))
+
+vir.fam.bar <- plot_grid(get_legend(ntwk.vir), vir.fam.p, ncol = 1, rel_heights = c(4,5))
+vir.fam <- cowplot::plot_grid(ntwk.vir + theme(legend.position = "none"), vir.fam.bar, rel_widths = c(2,1))
+
+host.phy.bar <- plot_grid(get_legend(ntwk.host), host.bar.p, ncol = 1, rel_heights = c(4,5))
+host.phy<- cowplot::plot_grid(ntwk.host + theme(legend.position = "none"), host.phy.bar, rel_widths = c(2,1))
+
+cowplot::plot_grid(whole, vir.fam, host.phy, ncol = 1, labels = c ("A", "B", "C"), label_size = 20)
+```
+

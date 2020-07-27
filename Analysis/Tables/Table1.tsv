@@ -1,0 +1,11 @@
+Term	R2	Pval	Set
+Time Point	0.28	0.001	16S
+Biochar	0.166	0.343	16S
+Nitrogen	0.129	0.697	16S
+Column	0.048	0.428	16S
+Row	0.044	0.535	16S
+Time Point	0.5	0.001	vOTU
+Biochar	0.139	0.039	vOTU
+Nitrogen	0.119	0.461	vOTU
+Column	0.173	0.001	vOTU
+Row	0.043	0.088	vOTU

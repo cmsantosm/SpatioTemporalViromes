@@ -1,0 +1,322 @@
+```{r}
+source("../../General/general_functions.R")
+#library(lsa)
+#library(broom)
+library(vegan)
+library(tidyverse)
+```
+
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+v.map <- filter(map, Extraction == "VFD" & Keep)
+b.map <- filter(map, Extraction == "BULK" & Keep)
+
+plot.des <- readRDS("../Data/plot_design.RDS")
+otu <- readRDS("../Data/virome_tpm_75_mtx.RDS")
+
+v.otu <- otu[,colnames(otu) %in% v.map$SampleID]
+v.otu.ra <- rel_ab(v.otu)
+
+b.otu <- readRDS("../Data/rrna_otu_filt.RDS")
+b.otu <- b.otu[,colnames(b.otu) %in% b.map$SampleID]
+b.otu.ra <- rel_ab(b.otu)
+
+spatial.pal <- RColorBrewer::brewer.pal(4, "Purples") 
+```
+
+```{r}
+v.dist <- vegan::vegdist(vegan::decostand(t(v.otu.ra), method = "hellinger"), method = "bray")
+
+v.pcoa.axes <- pcoa_axes(as.matrix(v.dist), v.map)
+v.pcoa.eig <- pcoa_eigval(as.matrix(v.dist), v.map)
+
+v.pcoa.p <- v.pcoa.axes %>% 
+  mutate(Biochar = strtrim(Sample, 2),
+         Nitrogen = str_extract(Sample, "L|H")) %>% 
+  ggplot(aes(Axis.1, Axis.2)) +
+  geom_point(aes(fill = as.factor(Position_x), shape = Month), 
+             size = 4, 
+             color = "gray25", 
+             stroke = 1) +
+  geom_line(aes(group = Sample), color = "gray25", linetype = 2) +
+  scale_color_brewer(name = "", palette = "Paired") +
+  scale_shape_manual(name = "", values = c(21,24)) +
+  scale_fill_manual(values = spatial.pal, guide = F) +
+  scale_color_manual(values = spatial.pal, guide = F) +
+  xlab(paste("PCo1 (", v.pcoa.eig$Eigval[1], "%)", sep = "")) +
+  ylab(paste("PCo2 (", v.pcoa.eig$Eigval[2], "%)", sep = "")) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        #panel.border = element_blank(),
+        legend.position = "top")
+
+v.pcoa.p
+```
+
+```{r}
+field.p <- plot.des %>% 
+  ggplot(aes(Position_x_mts, Position_y_mts)) +
+  geom_tile(aes(fill = as.factor(Column)), color = "black", size = 1) +
+  geom_point(data = filter(plot.des, !is.na(Sample)), aes(color = Column), size = 3, shape = 4, stroke = 1) +
+  scale_fill_manual(values = spatial.pal) +
+  scale_color_distiller(palette = "Greys", direction = -1) +
+  xlab("Distance (m)\nWest-East") +
+  ylab("Distance (m)\nSouth-North") +
+  coord_fixed() +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank(),
+        legend.position = "none")
+
+field.p
+```
+
+```{r}
+tmp <- map %>% filter(!is.na(Sample)) %>% 
+  group_by(Sample, Position_x_mts) %>% 
+  count() %>% 
+  select(-n) %>% 
+  as.data.frame()
+
+field.dist <- data.frame(FieldDist = tmp$Position_x_mts,
+                         row.names = tmp$Sample) %>% 
+  dist()
+
+field.dist <- as.matrix(field.dist)
+
+field.tidy <- field.dist  %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  mutate(Sample.x = row.names(.)) %>%
+  gather(key = "Sample.y", value = "FieldDistance", -Sample.x) %>%
+  filter(Sample.x != Sample.y)
+
+```
+
+```{r}
+v.map.apr <- filter(v.map, Month == "Apr")
+v.map.aug <- filter(v.map, Month == "Aug")
+
+v.dist <- as.matrix(v.dist)
+
+v.apr.dist <- v.dist[match(v.map.apr$SampleID,row.names(v.dist)),match(v.map.apr$SampleID,colnames(v.dist))]
+row.names(v.apr.dist) <- str_split(row.names(v.apr.dist), "_", n = 2, simplify = T)[,1]
+colnames(v.apr.dist) <- str_split(colnames(v.apr.dist), "_", n = 2, simplify = T)[,1]
+v.apr.field.dist <- field.dist[match(row.names(v.apr.dist), row.names(field.dist)), match(colnames(v.apr.dist), colnames(field.dist))]
+v.apr.mant <- vegan::mantel(as.dist(v.apr.dist), as.dist(v.apr.field.dist), permutations = 9999, method = "pearson") 
+v.apr.mant
+
+v.aug.dist <- v.dist[match(v.map.aug$SampleID,row.names(v.dist)),match(v.map.aug$SampleID,colnames(v.dist))]
+row.names(v.aug.dist) <- str_split(row.names(v.aug.dist), "_", n = 2, simplify = T)[,1]
+colnames(v.aug.dist) <- str_split(colnames(v.aug.dist), "_", n = 2, simplify = T)[,1]
+v.aug.field.dist <- field.dist[match(row.names(v.aug.dist), row.names(field.dist)), match(colnames(v.aug.dist), colnames(field.dist))]
+v.aug.mant <- vegan::mantel(as.dist(v.aug.dist), as.dist(v.aug.field.dist), permutations = 9999, method = "pearson") 
+v.aug.mant
+
+v.mant.df <- data.frame(Month.x = c("Apr", "Aug"),
+                      R = c(v.apr.mant$statistic,v.aug.mant$statistic),
+                      P = c(v.apr.mant$signif, v.aug.mant$signif)) %>% 
+  mutate(r = paste("r", signif(R, 3), sep = " == "), 
+         Pval = paste("P", signif(P,2), sep = " == ")) %>% 
+  mutate(Label = paste(Month.x, r, Pval, sep = "\n")) %>% 
+  mutate(Label = str_replace_all(Label, "==", "="))
+```
+```{r}
+v.beta.tidy <- as.matrix(v.dist) %>%
+  as.data.frame() %>%
+  mutate(SampleID.x = row.names(.)) %>%
+  gather(key = "SampleID.y", value = "BetaDistance", -SampleID.x) %>%
+  inner_join(select(v.map, SampleID, Sample, Month), by = c("SampleID.x" = "SampleID")) %>%
+  inner_join(select(v.map, SampleID, Sample, Month), by = c("SampleID.y" = "SampleID")) %>%
+  filter(SampleID.x != SampleID.y) %>%
+  filter(Month.x == Month.y)
+
+v.pair.tidy <- inner_join(v.beta.tidy, field.tidy, by = c("Sample.x", "Sample.y"))
+
+
+v.cor.p <- v.pair.tidy %>% 
+  ggplot(aes(FieldDistance, BetaDistance)) +
+  geom_point(aes(color = Month.x)) +
+  geom_smooth(aes(color = Month.x), method = "lm", se = F) +
+  geom_label(data = filter(v.mant.df, Month.x == "Apr"), aes(0, 
+                                 max(v.pair.tidy$BetaDistance), 
+                                 label = Label, 
+                                 fill = Month.x), 
+            hjust = 0, 
+            vjust = 1, 
+            parse = F) +
+  geom_label(data = filter(v.mant.df, Month.x == "Aug"), aes(5, 
+                                 min(v.pair.tidy$BetaDistance), 
+                                 label = Label, 
+                                 fill = Month.x), 
+            hjust = 0, 
+            vjust = 0, 
+            parse = F) +
+  scale_color_brewer(name = "", palette = "Paired") +
+  scale_fill_brewer(name = "", palette = "Paired") +
+  ylab("vOTUs (Virome)\nPairwise B-C Dissimilarity") +
+  xlab("Pairwise W-E Distance (m)") +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "none")
+
+v.cor.p
+```
+
+```{r}
+sig.spatial <- read.table("../Tables/sig_vOTUs_spatial.tsv", sep = "\t", header = T)
+
+v.tidy.otu <- v.otu.ra %>% 
+  tidy_otu()
+
+col.tmp <- v.tidy.otu %>% 
+  inner_join(sig.spatial, by = "OTU_ID") %>% 
+  inner_join(v.map, by = "SampleID") %>% 
+  group_by(SampleID, SpatialEnrichment, TemporalEnrichment, Column, Month) %>% 
+  summarise(AggRelAb = sum(Count)) %>% 
+  group_by(SpatialEnrichment, Column, Month) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(SpatialEnrichment = fct_relevel(SpatialEnrichment, "West-Enriched")) 
+
+
+bar.p <- v.tidy.otu %>% 
+  inner_join(sig.spatial, by = "OTU_ID") %>% 
+  inner_join(map, by = "SampleID") %>% 
+  group_by(SampleID, SpatialEnrichment, TemporalEnrichment, Column, Month) %>% 
+  summarise(AggRelAb = sum(Count)) %>% 
+  group_by(SpatialEnrichment, TemporalEnrichment, Column, Month) %>% 
+  summarise(MeanAggRelAb = mean(AggRelAb)/100) %>% 
+  ungroup() %>% 
+  mutate(SpatialEnrichment = fct_relevel(SpatialEnrichment, "West-Enriched")) %>% 
+  ggplot(aes(Column, MeanAggRelAb)) +
+  geom_bar(stat = "identity", position = "stack", aes(fill = TemporalEnrichment)) +
+  geom_point(data = col.tmp, aes(y = 0, color = as.factor(Column), shape = Month), size = 4, stroke = 1) +
+  scale_fill_manual(name = "Time Point\nEnrichment",values = c(RColorBrewer::brewer.pal(4, "Paired")[3:4], "gray")) +
+  scale_color_manual(values = spatial.pal, guide = F) +
+  scale_shape(guide = F) +
+  ylab("Mean Rel. Ab.") +
+  xlab("West-East Position") +
+  #facet_grid(Mont ~ SpatialEnrichment, space = "free", scales = "free") +
+  facet_grid(. ~ SpatialEnrichment + Month) +
+  theme_light() +
+  theme(text=element_text(size = 15),
+        axis.text.x = element_blank(),
+        legend.position = "right")
+  
+bar.p
+```
+
+Plot it all together
+```{r}
+#841:611
+a <- cowplot::plot_grid(v.pcoa.p, field.p, rel_widths = c(5,4),
+                        labels = c("A", "B"), label_size = 20)
+
+b <- cowplot::plot_grid(a, v.cor.p, nrow = 1, rel_widths = c(3,2), 
+                        labels = c(NA, "C", "D"), label_size = 20)
+
+cowplot::plot_grid(b, bar.p, nrow = 2, rel_heights = c(7,6),labels = c(NA, "D"), label_size = 20)
+```
+
+Do the same for the 16S rRNA gene communities extracted from Total MG
+
+```{r}
+b.dist <- vegan::vegdist(vegan::decostand(t(b.otu.ra), method = "hellinger"), method = "bray")
+
+b.pcoa.axes <- pcoa_axes(as.matrix(b.dist), b.map)
+b.pcoa.eig <- pcoa_eigval(as.matrix(b.dist), b.map)
+
+b.pcoa.p <- b.pcoa.axes %>% 
+  ggplot(aes(Axis.1, Axis.2)) +
+  xlab(paste("PCo1 (", b.pcoa.eig$Eigval[1], "%)", sep = "")) +
+  ylab(paste("PCo2 (", b.pcoa.eig$Eigval[2], "%)", sep = "")) +
+  geom_point(aes(color = Month, shape = Month), size = 4, stroke = 1) +
+  scale_shape_manual(name = "16S OTUs\n(Total MG)", values = c(16,17)) +
+  scale_color_manual(name = "16S OTUs\n(Total MG)", values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6)]) +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        legend.position = "left")
+b.pcoa.p
+```
+
+```{r}
+b.map.apr <- filter(b.map, Month == "Apr")
+b.map.aug <- filter(b.map, Month == "Aug")
+
+b.dist <- as.matrix(b.dist)
+
+b.apr.dist <- b.dist[match(b.map.apr$SampleID,row.names(b.dist)),match(b.map.apr$SampleID,colnames(b.dist))]
+row.names(b.apr.dist) <- str_split(row.names(b.apr.dist), "_", n = 2, simplify = T)[,1]
+colnames(b.apr.dist) <- str_split(colnames(b.apr.dist), "_", n = 2, simplify = T)[,1]
+b.apr.field.dist <- field.dist[match(row.names(b.apr.dist), row.names(field.dist)), match(colnames(b.apr.dist), colnames(field.dist))]
+b.apr.mant <- vegan::mantel(as.dist(b.apr.dist), as.dist(b.apr.field.dist), permutations = 9999, method = "pearson") 
+b.apr.mant
+
+b.aug.dist <- b.dist[match(b.map.aug$SampleID,row.names(b.dist)),match(b.map.aug$SampleID,colnames(b.dist))]
+row.names(b.aug.dist) <- str_split(row.names(b.aug.dist), "_", n = 2, simplify = T)[,1]
+colnames(b.aug.dist) <- str_split(colnames(b.aug.dist), "_", n = 2, simplify = T)[,1]
+b.aug.field.dist <- field.dist[match(row.names(b.aug.dist), row.names(field.dist)), match(colnames(b.aug.dist), colnames(field.dist))]
+b.aug.mant <- vegan::mantel(as.dist(b.aug.dist), as.dist(b.aug.field.dist), permutations = 9999, method = "pearson") 
+b.aug.mant
+
+b.mant.df <- data.frame(Month.x = c("Apr", "Aug"),
+                      R = c(b.apr.mant$statistic,b.aug.mant$statistic),
+                      P = c(b.apr.mant$signif, b.aug.mant$signif)) %>% 
+  mutate(r = paste("r", signif(R, 3), sep = " == "), 
+         Pval = paste("P", signif(P,2), sep = " == ")) %>% 
+  mutate(Label = paste(Month.x, r, Pval, sep = "\n")) %>% 
+  mutate(Label = str_replace_all(Label, "==", "="))
+```
+```{r}
+b.beta.tidy <- as.matrix(b.dist) %>%
+  as.data.frame() %>%
+  mutate(SampleID.x = row.names(.)) %>%
+  gather(key = "SampleID.y", value = "BetaDistance", -SampleID.x) %>%
+  inner_join(select(b.map, SampleID, Sample, Month), by = c("SampleID.x" = "SampleID")) %>%
+  inner_join(select(b.map, SampleID, Sample, Month), by = c("SampleID.y" = "SampleID")) %>%
+  filter(SampleID.x != SampleID.y) %>%
+  filter(Month.x == Month.y)
+
+b.pair.tidy <- inner_join(b.beta.tidy, field.tidy, by = c("Sample.x", "Sample.y"))
+
+
+b.cor.p <- b.pair.tidy %>% 
+  ggplot(aes(FieldDistance, BetaDistance)) +
+  geom_point(aes(color = Month.x)) +
+  geom_smooth(aes(color = Month.x), method = "lm", se = F) +
+  geom_label(data = filter(b.mant.df, Month.x == "Apr"), aes(0, 
+                                 max(b.pair.tidy$BetaDistance), 
+                                 label = Label, 
+                                 fill = Month.x), 
+            hjust = 0, 
+            vjust = 1, 
+            parse = F) +
+  geom_label(data = filter(b.mant.df, Month.x == "Aug"), aes(0, 
+                                 min(b.pair.tidy$BetaDistance), 
+                                 label = Label, 
+                                 fill = Month.x), 
+            hjust = 0, 
+            vjust = 0, 
+            parse = F) +
+  scale_color_manual(values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6)]) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6)]) +
+  ylab("vOTUs (Virome)\nPairwise B-C Dissimilarity") +
+  xlab("Pairwise W-E Distance (m)") +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        legend.position = "none")
+
+b.cor.p
+```
+```{r}
+#870:373
+cowplot::plot_grid(b.pcoa.p, b.cor.p,
+                   nrow = 1,
+                   align = "h",
+                   axis = "l",
+                   rel_widths = c(5,4),
+                   labels = c("A", "B"), label_size = 20)
+
+```
+

@@ -1,0 +1,191 @@
+```{r}
+library(broom)
+library(ggdendro)
+library(tidyverse)
+```
+
+
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+
+nutrients <- readRDS("../Data/nutrients.RDS")
+
+nutrients <- inner_join(map, select(nutrients, -Sample, -Extraction, - Month),by = c("SampleID2" = "SampleID")) 
+
+nutrients.tidy <- nutrients %>% 
+  gather(key = "Variable", value = "Value", OMpct:MoisturePCT) %>% 
+  filter(!Variable %in% c("ZincPPM", "ManganesePPM", "IronPPM", "CopperPPM", "SodiumPCT", "PotassiumPct", "PhosphorusNaHCO3ppm", "MagnesiumPCT", "CalciumPCT")) 
+
+n.nuts <- length(unique(nutrients.tidy$Variable))
+n.nuts
+
+n.samples <- length(unique(nutrients.tidy$SampleID))
+n.samples
+```
+
+```{r}
+nutrients.nest <- nutrients.tidy %>% 
+  group_by(Variable) %>% 
+  nest()
+
+get_full_aov <- function(x) {
+  aov(Value ~ Month + Biochar + Column + Row, data = x) %>% tidy()
+}
+
+sup.table.nut <- nutrients.nest %>% 
+  mutate(AOV = map(data, get_full_aov)) %>% 
+  unnest(AOV) %>% 
+  group_by(term) %>% 
+  mutate(adjusted.p = p.adjust(p.value)) %>% 
+  ungroup() %>% 
+  select(-data)
+
+sig.month <- sup.table.nut %>% 
+  filter(adjusted.p < 0.05) %>% 
+  filter(term == "Month")
+
+write.table(sup.table.nut, "../Tables/nutrients_anova.tsv", sep = "\t", quote = F, row.names = F)
+```
+
+```{r}
+nut.mtx <- nutrients.tidy %>% 
+  group_by(Variable) %>% 
+  mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
+  select(SampleID, Variable, zValue) %>% 
+  spread(key = Variable, value = zValue) %>% 
+  as.data.frame()
+
+row.names(nut.mtx) <- nut.mtx$SampleID
+nut.mtx <- nut.mtx[,-1]
+nut.mtx <- as.matrix(nut.mtx)
+
+sample.dist <- dist(nut.mtx)
+nut.dist <- dist(t(nut.mtx))
+
+sample.dist
+
+sample.dd <- as.dendrogram(hclust(as.dist(sample.dist), method = "complete"))
+sample.ddata_x <- dendro_data(sample.dd)
+
+sample.labs <- label(sample.ddata_x) %>%
+  rename("SampleID" = "label") %>%
+  rename("SampleOrder" = "x") 
+
+nut.dd <- as.dendrogram(hclust(as.dist(nut.dist), method = "complete"))
+nut.ddata_x <- dendro_data(nut.dd)
+nut.labs <- label(nut.ddata_x) %>% 
+  rename("Variable" = "label") %>% 
+  rename("VariableOrder" = "x")
+```
+
+
+```{r}
+nutrients.master <- nutrients.tidy %>% 
+  group_by(Variable) %>% 
+  mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
+  inner_join(sample.labs, by = "SampleID") %>% 
+  inner_join(nut.labs, by = "Variable") %>% 
+  mutate(Nutrients = fct_recode(Variable, 
+                                "Na (%)" = "SodiumPCT",
+                                "Na (ppm)" = "SodiumPPM",
+                                "SO4 (ppm)" = "SulfurSO4ppm",
+                                "NH4 (ppm)" = "NH4ppm",
+                                "NO3 (ppm)" = "NO3ppm",
+                                "Total N (%)" = "TNpct",
+                                "OM (%)" = "OMpct",
+                                "Total C (%)" = "TCpct",
+                                "K (%)" = "PotassiumPct",
+                                "P-NaHCO3 (ppm)" = "PhosphorusNaHCO3ppm",
+                                "P (ppm)" = "PhosphorusPPM",
+                                "Mg (%)" = "MagnesiumPCT",
+                                "K (ppm)" = "PotassiumPPM",
+                                "Ca (ppm)" = "CalciumPPM",
+                                "CEC" = "CEC",
+                                "Mg (ppm)" = "MagnesiumPPM",
+                                "pH" = "pH",
+                                "Ca (%)" = "CalciumPCT",
+                                "Moisture (%)" = "MoisturePCT")) %>% 
+  ungroup() %>% 
+  mutate(Nutrients = ifelse(Variable %in% sig.month$Variable, paste("*", Nutrients), as.character(Nutrients)))
+
+v.p2 <- ggplot(segment(sample.ddata_x)) +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
+
+sample.labs.2 <- label(sample.ddata_x) %>%
+  inner_join(map, by = c("label" = "SampleID")) %>%
+  mutate(Month2 = ifelse(Month == "Apr", "April\nPre-Planting\nPre-N Fertilization\nLigation", "August\nPost-Planting\nPost-N Fertilization\nTagmentation"))
+
+v.dd <- v.p2 + 
+  geom_point(data=sample.labs.2,
+             aes(x=x, y=0.5, fill = Month2, shape = Month2), size = 4, stroke = 1, color = "gray25") +
+  coord_flip(expand = T) +
+  scale_fill_manual(name = "Time Point", values = RColorBrewer::brewer.pal(6, "Paired")[3:4]) + 
+  scale_shape_manual(name = "Time Point", values = c(21,24)) +
+  theme_classic() +
+  theme(text = element_text(size = 15),
+        #legend.text = element_text(size = 15),
+        #legend.title = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "right") +
+  scale_y_reverse() 
+
+
+v.dd
+
+ labs.p <- sample.labs.2 %>%
+  ggplot() +
+  geom_text(data=sample.labs.2,
+             aes(x=x, y=-1, label = BchNtr)) +
+  coord_flip(expand = T) +
+  scale_fill_manual(values = RColorBrewer::brewer.pal(6, "Paired")[3:4]) +
+  scale_shape_manual(values = c(21,24)) +
+  theme_classic() +
+  theme(text = element_text(size = 15),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none") +
+  scale_y_reverse()
+
+labs.p
+
+
+nut.p <- nutrients.master %>% 
+  mutate(zValue = ifelse(abs(zValue) > 2, 2*sign(zValue), zValue)) %>% 
+  mutate(Month2 = ifelse(Month == "Apr", 1, 2)) %>% 
+  mutate(BchNtr2 = paste(Month2, BchNtr)) %>% 
+  ggplot(aes(reorder(Nutrients, VariableOrder), reorder(BchNtr2, SampleOrder))) +
+  geom_tile(aes(fill = zValue),size = 0.5, color = "white") +
+  scale_fill_viridis_c(name = "Concentration\n(z-score)", option = "inferno",
+                       guide = guide_colorbar(title.hjust = 0.5,
+                                              title.vjust = 1,
+                                              title.position = "top")) +
+  #facet_grid(Month ~ ., scales = "free") +
+  theme_minimal() +
+  theme(text = element_text(size = 15),
+        #axis.text.y = element_text(hjust = 1),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "top") 
+
+nut.p  
+
+
+nut.heat.tmp <- cowplot::plot_grid(v.dd + theme(legend.position = "none"), 
+                                   labs.p, 
+                                   nut.p + theme(legend.position = "none"), 
+                                   nrow = 1, align = "h", axis = "tb", 
+                                   rel_widths = c(3,2,8), 
+                                   labels = c("C"), label_size = 20)
+
+leg.tmp <- cowplot::plot_grid(cowplot::get_legend(v.dd), cowplot::get_legend(nut.p), ncol = 1)
+
+nut.heat.p <- cowplot::plot_grid(nut.heat.tmp, leg.tmp, rel_widths = c(3,1))
+nut.heat.p
+```

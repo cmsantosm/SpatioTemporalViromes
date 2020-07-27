@@ -1,0 +1,432 @@
+```{r}
+source("../../General/general_functions.R")
+library(vegan)
+library(tidyverse)
+```
+
+```{r}
+map <- readRDS("../Data/full_map.RDS") %>% 
+  mutate(Method = fct_recode(Method,
+                             "Total MG" = "Total Metagenome")) 
+
+sample.order <- map %>% 
+  group_by(Sample, BiocharFull, NitrogenFull) %>% 
+  count() %>% 
+  select(-n) %>%
+  ungroup() %>% 
+  mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
+  arrange(BiocharFull, NitrogenFull) %>% 
+  mutate(Rank = 1:nrow(.)) %>% 
+  select(Sample, Rank) 
+
+map <- inner_join(map, sample.order, by = "Sample")
+```
+
+
+SeqDepth
+```{r}
+seq.stats <- readRDS("../Data/seq_qual_stats.RDS") %>% 
+  mutate(LibraryID = str_extract(Library, "B.+_R(1|2)"),
+         SampleID = str_extract(Library, "B.+L006"),
+         ReadPair = str_extract(Library,"_R(1|2)"), 
+         ReadPair = str_extract(ReadPair, "R(1|2)")) %>% 
+  filter(Type == "rmphix" | Type == "raw")
+
+seq.depth <- seq.stats %>% 
+  group_by(SampleID, Total_Sequences, Type) %>%
+  count() %>% 
+  inner_join(map, by = "SampleID") %>% 
+  mutate(EM = paste(Extraction, Month, sep = "-")) %>% 
+  ungroup()
+
+seq.depth %>% 
+  filter(Type == "rmphix") %>% 
+  group_by(Extraction, Month) %>% 
+  summarise(sum(Total_Sequences),
+            mean(Total_Sequences),
+            median(Total_Sequences),
+            max(Total_Sequences),
+            min(Total_Sequences))
+
+depth.p <- seq.depth %>% 
+  filter(Type == "rmphix") %>% 
+  ggplot(aes(Month, Total_Sequences, color = EM)) +
+  geom_boxplot(size = 1) +
+  scale_color_manual(name = "", 
+                    values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6,1,2)]) +
+  ylab("Sequencing Depth\n(Paired Reads)") +
+  xlab("") +
+  scale_y_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6 ,accuracy = 1)) +
+  facet_grid(. ~ Extraction, scales = "free") +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank(),
+        strip.background = element_blank(),
+        strip.text = element_blank(),
+        legend.position = "none")
+  
+depth.p
+```
+
+```{r}
+depth.table <- seq.depth %>% 
+  select(SampleID, Method, Total_Sequences, Type, Month, Column, Row, BiocharFull, NitrogenFull, LibraryPrep) %>%
+  spread(key = Type, value = Total_Sequences) %>% 
+  rename("RawReads" = "raw",
+         "FilteredReads" = "rmphix") %>% 
+  arrange(Month, Method)
+
+write.table(depth.table, "../Tables/seq_depth.tsv", sep = "\t", quote = F, row.names = F)
+```
+
+
+```{r}
+rrna.otu <- readRDS("../Data/rrna_otu.RDS")
+
+rrna.counts <- data.frame(SampleID = as.character(colnames(rrna.otu)),
+                          rrna_reads = colSums(rrna.otu))
+
+rrna.perc <- seq.stats %>% 
+  filter(Type == "rmphix") %>% 
+  group_by(SampleID) %>% 
+  summarise(Total_Sequences = sum(Total_Sequences)) %>% 
+  inner_join(rrna.counts, by = "SampleID") %>% 
+  mutate(percent_rrna = rrna_reads/Total_Sequences * 100) %>% 
+  inner_join(map)
+
+rrna.perc %>% 
+  group_by(Extraction) %>% 
+  summarise(TotalPercent16S = sum(rrna_reads)/sum(Total_Sequences) * 100)
+
+rrna.p <- rrna.perc %>% 
+  mutate(EM = paste(Extraction, Month, sep = "-")) %>%  
+  ggplot(aes(Month, percent_rrna, color = EM)) +
+  geom_boxplot(size = 1) +
+  scale_color_manual(name = "", 
+                    values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6,1,2)]) +
+  ylab("16S rRNA Gene Abund.\n(% Reads)") +
+  xlab("") +
+  facet_grid(. ~ Extraction, scales = "free") +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank(), 
+        strip.background = element_blank(),
+        strip.text = element_blank(),
+        legend.position = "none")
+  
+rrna.p
+```
+
+Complexity
+```{r}
+complexity <- readRDS("../Data/kmer_freq.RDS")
+
+complex.p <- complexity %>% 
+  filter(Kmer == " k31") %>% 
+  inner_join(map, by = "SampleID") %>% 
+  mutate(EM = paste(Extraction, Month)) %>% 
+  ggplot(aes(Occurrence, Count, color = EM, group = SampleID)) +
+  geom_line(alpha = 0.5) +
+  scale_y_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_x_log10() +
+  xlab("Occurrence (log10)") +
+  ylab("Number of k-mers\n(log10)") +
+  scale_color_manual(values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6,1,2)]) +
+  theme_bw() +theme(text = element_text(size = 15),
+                    panel.border = element_blank(),
+                    legend.position = "none")
+complex.p
+```
+
+assemblies
+```{r}
+vir.ass <- readRDS("../Data/assembly_vir.RDS") %>% inner_join(select(map, SampleID, BchNtr, Method, Rank), by = "SampleID")
+
+wrapped.stats <- read.table("../Data/2k.stats.wrapped.txt", header = T)
+
+wrapped.stats <- wrapped.stats %>% 
+  mutate(SampleID = str_extract(filename, "B.*L006")) %>% 
+  select(-filename) %>% 
+  select(SampleID, everything()) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  mutate(EM = paste(Method, Month, sep = " - "))
+
+wrapped.stats %>% 
+  group_by(Extraction) %>% 
+  summarise(sum(contig_bp))
+
+vir.p <- vir.ass %>% 
+  group_by(SampleID) %>% 
+  summarise(pViral = sum(Viral)/n() * 100) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  mutate(EM = paste(Method, Month, sep = " - "))
+
+vir.ass %>% 
+  group_by(Extraction) %>% 
+  summarise(sum(Length),
+            n(),
+            sum(Viral)/n() * 100)
+
+vir.p
+
+
+vir.ass.p <- vir.ass %>% 
+  mutate(EM = paste(Method, Month, sep = " - ")) %>% 
+  ggplot(aes(reorder(BchNtr, -Rank), Length)) +
+  geom_jitter(alpha = 0.5, shape = 16, size = 1, color = "gray25") +
+  geom_point(data = wrapped.stats, aes(BchNtr, ctg_L50), size = 2, fill = "white", color = "gray25", shape = 21) +
+  geom_point(data = vir.p, aes(BchNtr, y = 1500, color = pViral), shape = 15, size = 5) +
+  ylab("Contig Length (log10)") +
+  xlab("Plot") +
+  scale_y_log10(labels = scales::unit_format(unit = "K", scale = 1e-3, accuracy = 1)) +
+  scale_color_gradientn(name = "Viral Enrichment\n(% Contigs)",
+                        colors = RColorBrewer::brewer.pal(9, "Greens")[2:7], 
+                        #direction = 1,
+                        guide = guide_colorbar(title.hjust = 1,
+                                               label.theme = element_text(angle = 90))) +
+  coord_flip() +
+  facet_grid(EM ~ ., scales = "free", space = "free") +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        #axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "top")
+
+vir.ass.p
+```
+
+```{r}
+legend.p <- map %>% 
+  mutate(EM = paste(Method, Month, sep = " - ")) %>% 
+  ggplot(aes(Sample, 1, color = EM)) +
+  geom_point(size = 5) +
+  scale_color_manual(name = "",
+                     values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6,1,2)]) +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        legend.position = "top") +
+  guides(col = guide_legend(nrow = 2))
+
+legend.p
+```
+
+```{r}
+left <- cowplot::plot_grid(cowplot::get_legend(legend.p), depth.p, rrna.p, complex.p, ncol = 1, rel_heights = c(1,3,3,3),
+                           labels = c(NA,"A", "B", "C"), label_size = 20)
+left
+```
+
+```{r}
+right <- cowplot::plot_grid(cowplot::get_legend(vir.ass.p), vir.ass.p + theme(legend.position = "none"),ncol = 1, rel_heights = c(1,9),
+                            labels = "D", label_size = 20)
+### 666:795
+cowplot::plot_grid(left, right, nrow = 1, rel_widths = c(4,5))
+```
+
+```{r}
+rrna.otu.filt <- readRDS("../Data/rrna_otu_filt.RDS")
+rrna.tax <- readRDS("../Data/rrna_tax.RDS")
+
+rrna.otu.tidy <- tidy_otu(rrna.otu.filt)
+
+top.tax <- get_top_taxa(rel_ab(rrna.otu.filt), rrna.tax, rank = "Phylum", n=10)
+top.tax
+
+rrna.tax <- collapse_other_phylum(rrna.tax, top.tax)
+
+phy.p <- rrna.otu.tidy %>% 
+  inner_join(rrna.tax, by = "OTU_ID") %>% 
+  filter(Classification == "Classified") %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAb = Count/sum(Count)) %>% 
+  group_by(Phylum2, SampleID) %>% 
+  summarise(TaxAb = sum(RelAb)) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  ungroup() %>% 
+  mutate(Method = fct_recode(Method,
+                             "Total MG" = "Total Metagenome")) %>% 
+  mutate(Phylum2 = fct_recode(Phylum2, 
+                              "Low Abundance" = "other")) %>% 
+  mutate(Phylum2 = fct_relevel(Phylum2, "Low Abundance")) %>% 
+  ggplot(aes(reorder(BchNtr, Rank), TaxAb, fill = Phylum2)) +
+  geom_bar(stat = "identity") +
+   scale_fill_manual(name = "Phylum",
+                     values = c("gray65", RColorBrewer::brewer.pal(10, "BrBG"))) +
+  facet_grid(. ~ Method + Month, scales = "free") +
+  ylab("Relative Abundance") +
+  xlab("Plot") +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.x = element_text(angle = 90, hjust = 1) ) 
+
+phy.p
+```
+
+```{r}
+phy.nest <- rrna.otu.tidy %>% 
+  inner_join(rrna.tax, by = "OTU_ID") %>% 
+  filter(Classification == "Classified") %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAb = Count/sum(Count)) %>% 
+  group_by(Phylum, SampleID) %>% 
+  summarise(TaxAb = sum(RelAb)) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  select(Phylum, BchNtr, Month, Extraction, TaxAb) %>% 
+  spread(key = Extraction, value = TaxAb) %>% 
+  filter(!is.na(BULK) & !is.na(VFD)) %>% 
+  group_by(Phylum) %>% 
+  nest()
+
+get_wilcox_greater <- function(x) {
+  wilcox.test(x$BULK, x$VFD, paired = TRUE, alternative  = "greater") %>% 
+  broom::tidy()
+}  
+
+get_wilcox_less <- function(x) {
+  wilcox.test(x$BULK, x$VFD, paired = TRUE, alternative  = "less") %>% 
+  broom::tidy()
+}  
+
+get_wilcox_ts <- function(x) {
+  wilcox.test(x$BULK, x$VFD, paired = TRUE, alternative  = "two.sided") %>% 
+  broom::tidy()
+}  
+
+wilcox.test <- phy.nest %>% 
+  mutate(Wilcox_ts = map(data, get_wilcox_ts)) %>% 
+  mutate(Wilcox_greater = map(data, get_wilcox_greater)) %>% 
+  mutate(Wilcox_less = map(data, get_wilcox_less)) 
+
+wt.p <- rbind(unnest(wilcox.test, Wilcox_ts), unnest(wilcox.test, Wilcox_greater), unnest(wilcox.test, Wilcox_less)) %>% 
+  group_by(alternative) %>% 
+  mutate(p.adjusted = p.adjust(p.value)) %>% 
+  filter(p.adjusted < 0.05) %>% 
+  filter(alternative != "two.sided") %>%
+  ungroup() %>% 
+  mutate(Enrichment = ifelse(alternative == "greater", "Total MG", "Virome")) %>% 
+  ggplot(aes(reorder(Phylum, -p.adjusted), -log10(p.adjusted), fill = Enrichment)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c(RColorBrewer::brewer.pal(9, "Reds")[6],RColorBrewer::brewer.pal(9, "Blues")[6])) +
+  xlab("Phylum") +
+  ylab("Adjusted P-val (-log10)") +
+  coord_flip() +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "right")
+  
+wt.p
+```
+
+```{r}
+rrna.curve <- rarecurve(t(rrna.otu.filt))
+rrna.curve <- bind_rows(lapply(rrna.curve, as.data.frame.list)) 
+rrcurve.p <- mutate(rrna.curve, SampleID = colnames(rrna.otu.filt)) %>% 
+  gather(key = "SampleSize", value = "nSpecies", -SampleID) %>% 
+  mutate(SampleSize = as.numeric(substring(SampleSize, 2))) %>% 
+  filter(!is.na(nSpecies)) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  filter(Extraction == "BULK") %>% 
+  ggplot(aes(SampleSize, nSpecies, group = SampleID, color = Month)) +
+  geom_line() +
+  xlab("Number of Reads") +
+  ylab("Number of OTUs") +
+  scale_color_manual(name = "Time Point", values = RColorBrewer::brewer.pal(6, "Paired")[5:6]) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = c(0.8, 0.4))
+
+rrcurve.p
+```
+
+```{r}
+### 992:621
+bottom <- cowplot::plot_grid(wt.p, rrcurve.p, nrow = 1, labels = c("B", "C"), rel_widths = c(3,2),label_size = 20)
+
+cowplot::plot_grid(phy.p, bottom, nrow = 2, rel_heights = c(3,2), labels = c("A"), label_size = 20)
+```
+
+```{r}
+map.stats <- readRDS("../Data/mapping_stats.RDS")
+
+map.stats %>% 
+  group_by(Extraction) %>% 
+  summarise(MeanMapped = mean(PercentMapped),
+            MeanMappedAbove75 = mean(PercentMappedAbove75),
+            MeanMappedBelow75 = mean(PercentMappedBelow75),
+            MeanNonMapped = mean(PercentNonMapped))
+```
+
+
+```{r}
+mapped.p <- map.stats %>% 
+  select(SampleID, PercentMappedAbove75, PercentMappedBelow75, PercentNonMapped) %>% 
+  gather(key = Type, value = Reads, -SampleID)  %>% 
+  mutate(Type = fct_relevel(Type, 
+                            "PercentNonMapped",
+                            "PercentMappedBelow75",
+                            "PercentMappedAbove75")) %>% 
+  mutate(Type = fct_recode(Type,
+                           "Not Mapped" = "PercentNonMapped",
+                           "Mapped\n<75%" = "PercentMappedBelow75",
+                           "Mapped\n>75%" = "PercentMappedAbove75")) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  mutate(Method = fct_recode(Method, "Total MG" = "Total Metagenome")) %>% 
+  ggplot(aes(reorder(BchNtr, Rank), Reads, fill = Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_grid(. ~ Method + Month, scales = "free", space = "free") +
+  xlab("") +
+  ylab("% Mapped Reads")+
+  scale_fill_manual(name = "",
+                    values = c("gray50", RColorBrewer::brewer.pal(11, "Greens")[c(5,7)])) +
+  scale_y_continuous(labels = scales::unit_format(unit = "%")) +
+  guides(fill = guide_legend(title.position = "top", title.hjust =  0.5)) + 
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        axis.text.x = element_text(angle = 90, hjust = 1, size = 8, vjust = 0.5),
+        legend.position = "right",
+        panel.border = element_blank())
+
+mapped.p
+```
+
+```{r}
+limits <- map.stats %>% 
+  group_by(Extraction, Method) %>% 
+  summarise(sdMR = sd(Mapped75),
+            meanMR = mean(Mapped75),
+            sdOTUs = sd(nOTUs),
+            meanOTUs = mean(nOTUs)) %>% 
+  ungroup() %>% 
+  mutate(maxMR = meanMR + 2*sdMR,
+         minMR = meanMR - 2*sdMR,
+         maxOTUs = meanOTUs + 2*sdOTUs,
+         minOTUs = meanOTUs - 2*sdOTUs)
+
+limits
+tmp <-  map.stats %>% 
+  mutate(Method = fct_recode(Method, "Total MG" = "Total Metagenome")) %>% 
+  mutate(Set = paste(Method, Month, sep = " - ")) 
+
+notu.p <- tmp %>% 
+  ggplot(aes(Mapped75, nOTUs)) +
+  geom_point(aes(color = Set, shape = Set), size = 3, alpha = 0.8) +
+  geom_point(data = filter(tmp, !Keep), shape = 1, size = 7) +
+  scale_x_continuous(labels = scales::unit_format(unit = "M", scale = 1e-6)) +
+  scale_color_manual(name = "", values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6,1,2)]) +
+  scale_shape_manual(name = "", values = c(16, 17, 16, 17)) +
+  ylab("Number of vOTUs") +
+  xlab("Number of Mapped Reads") +
+  facet_wrap(~ Method, scales = "free") +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.border = element_blank())
+
+notu.p
+```
+
+
+```{r}
+### 600:575
+cowplot::plot_grid(mapped.p, notu.p, nrow = 2, rel_heights = c(5,5), labels = c("A","B"), label_size = 20)
+```

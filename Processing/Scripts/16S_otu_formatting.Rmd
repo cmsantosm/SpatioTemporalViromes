@@ -1,0 +1,36 @@
+```{r}
+source("../../General/general_functions.R")
+library(RDPutils)
+library(tidyverse)
+```
+
+Open hier file, get otu table and taxonomies, reformat
+```{r}
+hier.phy <- hier2phyloseq("../Data/RDP/merged_hier.txt")
+otu <- as.data.frame(otu_table(hier.phy))
+tax <- as.data.frame(tax_table(hier.phy))
+
+sample.names <- colnames(otu)
+sample.names <- str_replace(sample.names, pattern = ".rrna.fq", replacement = "")
+sample.names <- str_replace_all(sample.names, pattern = "\\.", replacement = "_" )
+colnames(otu) <- sample.names
+
+tax$OTU_ID <- row.names(tax)
+head(tax)
+```
+
+Filter out mitochondria and chloroplast
+```{r}
+tax <- tax %>% 
+  mutate(Classification = ifelse(!Phylum %in% c("unclass_Archaea", "unclass_Bacteria", "unclass_Root", "Cyanobacteria/Chloroplast"), "Classified", as.character(Phylum)))
+tax <- expand_proteo(tax)
+
+otu.filt <- otu[rownames(otu) %in% filter(tax, Classification == "Classified")$OTU_ID,]
+```
+
+Save into Analysis folder
+```{r}
+saveRDS(tax, "../../Analysis/Data/rrna_tax.RDS")
+saveRDS(otu.filt, "../../Analysis/Data/rrna_otu_filt.RDS")
+```
+

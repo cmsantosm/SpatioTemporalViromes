@@ -1,0 +1,75 @@
+Load libraries
+```{r}
+source("../../General/general_functions.R")
+library(vegan)
+library(tidyverse)
+```
+
+Load data and filter appropriate sets
+```{r}
+map <- readRDS("../Data/full_map.RDS")
+v.map <- filter(map, Extraction == "VFD" & Keep)
+b.map <- filter(map, Extraction == "BULK" & Keep)
+
+vfd.otu <- readRDS("../Data/virome_tpm_75_mtx.RDS")
+v.vfd.otu <- vfd.otu[,colnames(vfd.otu) %in% v.map$SampleID]
+v.vfd.otu <- v.vfd.otu[,match(colnames(v.vfd.otu), v.map$SampleID)] 
+v.vfd.otu.ra <- rel_ab(v.vfd.otu)
+
+rrna.otu <- readRDS("../Data/rrna_otu_filt.RDS")
+b.rrna.otu <- rrna.otu[,colnames(rrna.otu) %in% b.map$SampleID]
+b.rrna.otu <- b.rrna.otu[,match(colnames(b.rrna.otu), b.map$SampleID)]
+b.rrna.otu.ra <- rel_ab(b.rrna.otu)
+```
+
+Perform PERMANOVA on all samples testing for Time Point, Biochar, and Plot Position (coded as Column and Row within the field)
+```{r}
+v.vfd.dist <- vegan::vegdist(vegan::decostand(t(v.vfd.otu.ra), method = "hellinger"), method = "bray") %>% 
+  as.matrix()
+v.vfd.pm <- vegan::adonis(as.dist(v.vfd.dist) ~ Month + Column + Biochar + Row,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VFD", Set = "vOTU") 
+
+b.rrna.dist <- vegan::vegdist(vegan::decostand(t(b.rrna.otu.ra), method = "hellinger"), method = "bray") %>% 
+  as.matrix()
+b.rrna.pm <- vegan::adonis(as.dist(b.rrna.dist) ~ Month + Column + Biochar + Row,  data = b.map)$aov.tab  %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "BULK", Set = "16S") 
+```
+
+Subset August samples and perform PERMANOVA testing Nitrogen Concentration
+```{r}
+aug.v.map <- filter(v.map, Month == "Aug")
+aug.b.map <- filter(b.map, Month == "Aug")
+
+aug.v.vfd.dist <- v.vfd.dist[row.names(v.vfd.dist) %in% aug.v.map$SampleID, colnames(v.vfd.dist) %in% aug.v.map$SampleID]
+aug.v.vfd.pm <- vegan::adonis(as.dist(aug.v.vfd.dist) ~ Column + Nitrogen,  data = aug.v.map)$aov.tab  %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VFD", Set = "vOTU") 
+
+aug.b.rrna.dist <- b.rrna.dist[row.names(b.rrna.dist) %in% aug.b.map$SampleID, colnames(b.rrna.dist) %in% aug.b.map$SampleID]
+aug.b.rrna.pm <- vegan::adonis(as.dist(aug.b.rrna.dist) ~ Column + Nitrogen,  data = aug.b.map)$aov.tab  %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "BULK", Set = "16S") 
+```
+
+Compile results and make table
+```{r}
+pmanova.df <- rbind(v.vfd.pm, filter(aug.v.vfd.pm, Term == "Nitrogen"),
+                b.rrna.pm, filter(aug.b.rrna.pm, Term == "Nitrogen")) %>% 
+  select(Term, everything()) %>% 
+  rename("Pval" = "Pr(>F)") %>% 
+  select(Term, R2, Pval, Set) %>% 
+  filter(Term != "Residuals") %>% 
+  filter(Term != "Total") %>% 
+  mutate(Term = fct_recode(Term, "Time Point" = "Month")) %>% 
+  mutate(Term = fct_relevel(Term, "Time Point", "Biochar", "Nitrogen", "Column", "Row")) %>% 
+  mutate(R2 = round(R2, digits = 3)) %>%
+  arrange(Set, Term)
+```
+
+Save table
+```{r}
+write.table(pmanova.df, "../Tables/Table1.tsv", sep = "\t", quote = F, row.names = F)
+```
+

@@ -1,0 +1,359 @@
+Load libraries
+```{r}
+library(GGally)
+library(tidyverse)
+```
+
+Load data
+```{r}
+otu.tidy <- readRDS("../../Analysis/Data/virome_tpm_75_tidy.RDS")
+genome.ov <- read.table("../Data/vConTACT/genome_by_genome_overview.csv", header = T, sep = ",")
+ntwk <- read.table("../Data/vConTACT/c1.ntw", header = F, sep = " ", col.names = c("OTU1", "OTU2", "Score"))
+```
+
+Get the source of each contig
+```{r}
+genome.ov <- genome.ov %>% 
+  mutate(Source = ifelse(str_detect(Genome, "biochar"), "biochar", "refseq"))
+```
+
+Check if all the contigs are accounted for. Total should be 2962 but there's only 2948 in the vcontact output. In order have the right numbers, To make sure the final OTU master file includes those missing genomes, I added them and classify the as singletons. 
+```{r}
+genome.ov %>% 
+  filter(Source == "biochar") %>% 
+  group_by(Genome) %>% 
+  count()
+
+missing.ids <- filter(otu.tidy, !OTU_ID %in% genome.ov$Genome) %>%
+  .$OTU_ID %>%
+  unique()
+
+missing.df <- data.frame(Genome = missing.ids,
+                         VC.Status = "Singleton",
+                         Source = "biochar")
+missing.df
+```
+
+Also, some the OTUs are duplicated and either classified as clustered or either singletons / outliers.  In each case, the clustered record doesn't have a VC assigned. Not sure what's going on here but I'll just classify them as singletons or outliers for downstream analyses. 
+```{r}
+genome.ov %>% 
+  group_by(Genome) %>% 
+  mutate(Duplicates = n()) %>% 
+  filter(Duplicates > 1) %>% 
+  arrange(Genome)
+
+duplicated.recs <- genome.ov %>% 
+  group_by(Genome) %>% 
+  mutate(Duplicates = n()) %>% 
+  filter(Duplicates > 1) %>% 
+  filter(VC.Status != "Clustered") %>% 
+  select(-Duplicates) 
+
+good.recs <- genome.ov %>% 
+  filter(!Genome %in% duplicated.recs$Genome)
+
+genome.master <- bind_rows(good.recs, duplicated.recs, missing.df)
+```
+
+Generate a data frame that specifies the composition of each cluster in terms of source of network nodes
+```{r}
+clstr.source <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  mutate(Biochar = str_detect(Genome, "biochar")) %>% 
+  group_by(VC, Size) %>% 
+  summarise(pBiochar = sum(Biochar)/n()) %>% 
+  mutate(ClstrComp = case_when(pBiochar == 0 ~ "refseq",
+                               pBiochar == 1 ~ "biochar",
+                               TRUE ~ "both" )) 
+```
+
+Let's create a data frame with the consensus viral taxonomy for each cluster. The strategy is to check each rank and see if there's only one assignment or a mix. Some refeseq entrees have unassigned ranks (see VC 104_0) so I'm ignoring those and deciding the proper classification based on the rest of the VC members 
+```{r}
+clstr.order <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Order != "Unassigned") %>% 
+  group_by(VC, Order) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(Order = ifelse(Duplicates > 1, "Mixed", as.character(Order))) %>% 
+  group_by(VC, Order) %>% 
+  count() %>% 
+  select(-n)
+
+clstr.family <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Family != "Unassigned") %>% 
+  group_by(VC, Family) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(Family = ifelse(Duplicates > 1, "Mixed", as.character(Family))) %>% 
+  group_by(VC, Family) %>% 
+  count() %>% 
+  select(-n)
+
+clstr.genus <-  genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Genus != "Unassigned") %>% 
+  group_by(VC, Genus) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(Genus = ifelse(Duplicates > 1, "Mixed", as.character(Genus))) %>% 
+  group_by(VC, Genus) %>% 
+  count() %>% 
+  select(-n)
+```
+
+
+Let's get the taxonomy of the host associated to refseq by extracting the genus from the ID and getting the higher taxa from greengenes taxonomy file.
+FYI - The greengenes taxonomy has some weird assignments that need to be carefull inspected. For example, Enterococcus is both classified as Actinobacteria and Firmicutes. 
+I selected the most prevalent taxonomy for those hosts with conflicting higher taxonomic ranks. 
+```{r}
+host.tax <- read.table("../../General/gg_13_8_97_tax.tsv", header = T, sep = "\t", quote = "")
+
+genus.host <- genome.ov %>% 
+  filter(Source == "refseq") %>% 
+  group_by(Genome) %>% 
+  count() %>% 
+  select(-n) %>% 
+  separate(Genome, c("Genus"),sep = "~", fill = "right", remove = F) 
+
+refseq.tmp <- host.tax %>% 
+  filter(Genus %in% genus.host$Genus) %>% 
+  group_by(Phylum, Class, Order, Family, Genus) %>% 
+  dplyr::count() %>% 
+  arrange(Genus) %>% 
+  group_by(Genus) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(Keep = ifelse(Duplicates == 1, TRUE, ifelse(n == max(n), TRUE, FALSE))) %>% 
+  ungroup() %>% 
+  filter(Keep) %>% 
+  select(-n, -Duplicates, -Keep) %>% 
+  right_join(genus.host, by = "Genus") %>% 
+  mutate(HostPhylum = ifelse(is.na(Phylum), "Unassigned", as.character(Phylum)),
+         HostClass = ifelse(is.na(Class), "Unassigned", as.character(Class)),
+         HostOrder= ifelse(is.na(Order), "Unassigned", as.character(Order)),
+         HostFamily = ifelse(is.na(Family), "Unassigned", as.character(Family)),
+         HostGenus = as.character(Genus)) %>% 
+  select(Genome, HostPhylum:HostGenus)
+  
+refseq.good <- filter(refseq.tmp, HostPhylum != "Unassigned")
+refseq.bad <- filter(refseq.tmp, HostPhylum == "Unassigned")
+```
+
+There seems to be 205 genomes with no clear genus. A close look at them shows that most of them have generic names (e.g Enterobacteria) or only show name of virus (e.g. Microviridae). The rest are typos (Streptomyce) or genus that don't seem to be represented in greengenes
+```{r}
+refseq.bad
+```
+
+Fixing the taxonomies. I am assuming enterobacteria are all enterobacteriaceae
+```{r}
+missing.tax <- tribble(
+  ~HostPhylum, ~HostClass, ~HostOrder, ~HostFamily, ~HostGenus,
+  "Proteobacteria", "Betaproteobacteria", "Burkholderiales", "Alcaligenaceae", "Bordetella",
+  "Proteobacteria", "Alphaproteobacteria", "Rhizobiales", "Brucellaceae", "Brucella",
+  "Bacteroidetes", "Flavobacteriia", "Flavobacteriales", "Flavobacteriaceae", "Croceibacter",
+  "Cyanobacteria", "Unassigned", "Unassigned", "Unassigned", "Cyanophage",
+  "Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Enterobacteria",
+  "Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Enterobacterial",
+  "Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Enterobacteriaphage",
+  "Proteobacteria", "Gammaproteobacteria", "Alteromonadales", "Idiomarinaceae", "Idiomarinaceae",
+  "Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Kluyvera",
+  "Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Enterobacteriaceae", "Lelliottia",
+  "Proteobacteria", "Gammaproteobacteria", "Enterobacterales", "Pectobacteriaceae", "Pectobacterium",
+  "Proteobacteria", "Alphaproteobacteria", "Rickettsiales", "Pelagibacteriaceae", "Pelagibacter",
+  "Proteobacteria", "Gammaproteobacteria", "Oceanospirillales", "	Halomonadaceae", "Salicola",
+  "Proteobacteria", "Alphaproteobacteria", "Rhodobacterales", "Rhodobacteraceae", "Silicibacter",
+  "Tenericutes", "Mollicutes", "Entomoplasmatales", "Spiroplasmataceae", "Spiroplasma",
+  "Crenarchaeota", "Thermoprotei", "Sulfolobales", "Unassigned", "Sulfolobales",
+  "Crenarchaeota", "Thermoprotei", "Thermoproteales", "Thermoproteaceae", "Thermoproteus",
+  "Verrucomicrobia", "Unassigned", "Unassigned", "Unassigned", "Verrucomicrobia"
+)
+
+refseq.manual <- refseq.bad %>% 
+  select(Genome, HostGenus) %>% 
+  inner_join(missing.tax, by = "HostGenus") %>% 
+  select(-HostGenus, HostGenus)
+
+refseq.manual
+```
+
+Correcting typos
+```{r}
+refseq.bad <- refseq.bad %>% 
+  select(Genome, HostGenus) %>% 
+  mutate(HostGenus = ifelse(HostGenus == "Deftia", "Delftia", HostGenus),
+         HostGenus = ifelse(HostGenus == "Hamiltonella", "Candidatus Hamiltonella", HostGenus),
+         HostGenus = ifelse(HostGenus == "Lactoccocus", "Lactococcus", HostGenus),
+         HostGenus = ifelse(HostGenus == "Pseudomonad", "Pseudomonas", HostGenus),
+         HostGenus = ifelse(HostGenus == "Streptomyce", "Streptomyces", HostGenus)) 
+
+refseq.typos <- host.tax %>% 
+  filter(Genus %in% refseq.bad$HostGenus) %>% 
+  group_by(Phylum, Class, Order, Family, Genus) %>% 
+  dplyr::count() %>% 
+  arrange(Genus) %>% 
+  group_by(Genus) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(Keep = ifelse(Duplicates == 1, TRUE, ifelse(n == max(n), TRUE, FALSE))) %>% 
+  ungroup() %>% 
+  filter(Keep) %>% 
+  select(-n, -Duplicates, -Keep) %>% 
+  inner_join(refseq.bad, by = c("Genus" = "HostGenus")) %>% 
+  mutate(HostPhylum = ifelse(is.na(Phylum), "Unassigned", as.character(Phylum)),
+         HostClass = ifelse(is.na(Class), "Unassigned", as.character(Class)),
+         HostOrder= ifelse(is.na(Order), "Unassigned", as.character(Order)),
+         HostFamily = ifelse(is.na(Family), "Unassigned", as.character(Family)),
+         HostGenus = as.character(Genus)) %>% 
+  select(Genome, HostPhylum:HostGenus)
+         
+refseq.typos
+```
+
+There are still some genomes whose hosts were not found. 
+```{r}
+refseq.fail <- refseq.bad %>% 
+  filter(!Genome %in% refseq.typos$Genome & !Genome %in% refseq.manual$Genome) %>% 
+  select(Genome) %>% 
+  mutate(HostPhylum = "Unassigned",
+         HostClass = "Unassigned",
+         HostOrder = "Unassigned",
+         HostFamily = "Unassigned",
+         HostGenus = "Unassigned") 
+
+refseq.fail
+```
+
+Compile all the host taxonomy data frames
+```{r}
+refseq.all <- rbind(refseq.good,
+                    refseq.typos,
+                    refseq.manual,
+                    refseq.fail)
+
+refseq.all
+```
+
+Let's assign the consensus host taxonomy for each cluster. The strategy is to check each rank and see if there's only one assignment or a mix.
+```{r}
+clstr.h.phy <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Source == "refseq") %>% 
+  inner_join(refseq.all, by = "Genome") %>% 
+  group_by(VC, HostPhylum) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(HostPhylum = ifelse(Duplicates > 1, "Mixed", as.character(HostPhylum))) %>% 
+  group_by(VC, HostPhylum) %>% 
+  count() %>% 
+  select(-n)
+
+clstr.h.class <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Source == "refseq") %>% 
+  inner_join(refseq.all, by = "Genome") %>% 
+  group_by(VC, HostClass) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(HostClass = ifelse(Duplicates > 1, "Mixed", as.character(HostClass))) %>% 
+  group_by(VC, HostClass) %>% 
+  count() %>% 
+  select(-n)
+
+clstr.h.order <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Source == "refseq") %>% 
+  inner_join(refseq.all, by = "Genome") %>% 
+  group_by(VC, HostOrder) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(HostOrder = ifelse(Duplicates > 1, "Mixed", as.character(HostOrder))) %>% 
+  group_by(VC, HostOrder) %>% 
+  count() %>% 
+  select(-n)
+
+clstr.h.fam <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Source == "refseq") %>% 
+  inner_join(refseq.all, by = "Genome") %>% 
+  group_by(VC, HostFamily) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(HostFamily = ifelse(Duplicates > 1, "Mixed", as.character(HostFamily))) %>% 
+  group_by(VC, HostFamily) %>% 
+  count() %>% 
+  select(-n)
+
+clstr.h.gen <- genome.ov %>% 
+  filter(VC.Status == "Clustered") %>% 
+  filter(VC != "nan") %>% 
+  filter(Source == "refseq") %>% 
+  inner_join(refseq.all, by = "Genome") %>% 
+  group_by(VC, HostGenus) %>% 
+  count() %>% 
+  group_by(VC) %>% 
+  mutate(Duplicates = n()) %>% 
+  mutate(HostGenus = ifelse(Duplicates > 1, "Mixed", as.character(HostGenus))) %>% 
+  group_by(VC, HostGenus) %>% 
+  count() %>% 
+  select(-n)
+
+```
+
+Put all the cluster info into one data frame
+```{r}
+clstr.master <- clstr.source %>% 
+  left_join(clstr.order, by = "VC") %>% 
+  left_join(clstr.family, by = "VC") %>% 
+  left_join(clstr.genus, by = "VC") %>% 
+  left_join(clstr.h.phy, by = "VC") %>% 
+  left_join(clstr.h.class, by = "VC") %>% 
+  left_join(clstr.h.order, by = "VC") %>% 
+  left_join(clstr.h.fam, by = "VC") %>% 
+  left_join(clstr.h.gen, by = "VC") %>% 
+  mutate(Order = ifelse(is.na(Order), "Unassigned", Order)) %>% 
+  mutate(Family = ifelse(is.na(Family), "Unassigned", Family)) %>% 
+  mutate(Genus = ifelse(is.na(Genus), "Unassigned", Genus)) %>% 
+  mutate(HostPhylum = ifelse(is.na(HostPhylum), "Unassigned", HostPhylum)) %>% 
+  mutate(HostClass = ifelse(is.na(HostClass), "Unassigned", HostClass)) %>% 
+  mutate(HostOrder = ifelse(is.na(HostOrder), "Unassigned", HostOrder)) %>% 
+  mutate(HostFamily = ifelse(is.na(HostFamily), "Unassigned", HostFamily)) %>% 
+  mutate(HostGenus = ifelse(is.na(HostGenus), "Unassigned", HostGenus))
+
+clstr.master
+```
+
+Get the network configuration and save the nodes and edges info
+```{r}
+nodes <- ggnet2(ntwk[,-3], mode = "fruchtermanreingold", layout.par = list(list=(niter=2000)))$data %>% 
+  rename("Genome" = "label")
+
+edges <- ntwk %>% 
+  mutate(Pair = paste(OTU1, OTU2, sep = ".")) %>% 
+  gather(key = "Member", value = "Genome", -Pair, -Score) %>% 
+  inner_join(nodes, by = "Genome")
+```
+
+Save files into the Analysis directory
+```{r}
+saveRDS(nodes, "../../Analysis/Data/ntwk_nodes.RDS")
+saveRDS(edges, "../../Analysis/Data/ntwk_edges.RDS")
+saveRDS(genome.master, "../../Analysis/Data/genome_vc_master.RDS")
+saveRDS(clstr.master, "../../Analysis/Data/cluster_vc_master.RDS")
+saveRDS(refseq.all, "../../Analysis/Data/refseq_host_tax.RDS")
+```
+
