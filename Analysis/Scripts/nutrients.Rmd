@@ -113,7 +113,9 @@ v.p2 <- ggplot(segment(sample.ddata_x)) +
 
 sample.labs.2 <- label(sample.ddata_x) %>%
   inner_join(map, by = c("label" = "SampleID")) %>%
-  mutate(Month2 = ifelse(Month == "Apr", "April\nPre-Planting\nPre-N Fertilization\nLigation", "August\nPost-Planting\nPost-N Fertilization\nTagmentation"))
+  mutate(Month2 = ifelse(Month == "Apr", 
+                         "April:\n• Pre-Planting\n• Pre-N Fertilization\n• Ligation", 
+                         "August:\n• Post-Planting\n• Post-N Fertilization\n• Tagmentation"))
 
 v.dd <- v.p2 + 
   geom_point(data=sample.labs.2,
