@@ -1,3 +1,10 @@
+---
+title: "temporal"
+output: html_notebook
+---
+
+This notebook formats the data from vConTACT2
+
 Load libraries
 ```{r}
 library(GGally)
@@ -112,7 +119,7 @@ clstr.genus <-  genome.ov %>%
 
 
 Let's get the taxonomy of the host associated to refseq by extracting the genus from the ID and getting the higher taxa from greengenes taxonomy file.
-FYI - The greengenes taxonomy has some weird assignments that need to be carefull inspected. For example, Enterococcus is both classified as Actinobacteria and Firmicutes. 
+FYI - The greengenes taxonomy has some weird assignments that need to be carefully inspected. For example, Enterococcus is both classified as Actinobacteria and Firmicutes. 
 I selected the most prevalent taxonomy for those hosts with conflicting higher taxonomic ranks. 
 ```{r}
 host.tax <- read.table("../../General/gg_13_8_97_tax.tsv", header = T, sep = "\t", quote = "")

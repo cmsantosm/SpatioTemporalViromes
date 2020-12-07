@@ -1,3 +1,11 @@
+---
+title: "temporal"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Figure 4A-B and Supplementary Figure 6
+
+Load libraries
 ```{r}
 source("../../General/general_functions.R")
 library(dendextend)
@@ -5,6 +13,7 @@ library(ggdendro)
 library(tidyverse)
 ```
 
+Load and format data
 ```{r}
 map <- readRDS("../Data/full_map.RDS")
 v.map <- filter(map, Extraction == "VFD" & Keep) %>% 
@@ -24,6 +33,7 @@ b.otu.ra <- rel_ab(b.otu)
 b.otu.tidy <- tidy_otu(b.otu.ra)
 ```
 
+For each subset (vOTUs in viromes and 16S OTUs in Total MGs), calculate Bray-Curtis dissimilarities on Hellinger-transformed relative abundances.
 ```{r}
 v.dist <- vegan::vegdist(vegan::decostand(t(v.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
 v.map <- v.map[match(row.names(v.dist), v.map$SampleID),]
@@ -38,10 +48,11 @@ colnames(b.dist) <- b.map$Group
 b.dist <- b.dist[match(row.names(v.dist), row.names(b.dist)), match(colnames(v.dist), colnames(b.dist))]
 ```
 
+Run a Mantel test comparing viral vs microbial community structure
 ```{r}
 vegan::mantel(as.dist(v.dist), as.dist(b.dist), permutations = 9999, method = "pearson") 
 ```
-
+Calculate the tanglegram
 ```{r}
 v.dd.row <- as.dendrogram(hclust(as.dist(v.dist)))
 b.dd.row <- as.dendrogram(hclust(as.dist(b.dist)))
@@ -50,6 +61,7 @@ untang.dd <- dendlist(v.dd.row, b.dd.row) %>%
   untangle() 
 ```
 
+Plot viral dendogram
 ```{r}
 v.ddata_x <- dendro_data(untang.dd[[1]])
 
@@ -77,7 +89,7 @@ v.dd <- v.p2 +
 
 v.dd
 ```
-
+Plot microbial dendogram
 ```{r}
 b.ddata_x <- dendro_data(untang.dd[[2]])
 
@@ -104,7 +116,7 @@ b.dd <- b.p2 +
 
 b.dd
 ```
-
+Plot the tip connections and put it all together
 ```{r}
 conx.p <- rbind(b.labs, v.labs) %>% 
   mutate(y = ifelse(Extraction == "BULK", 2, 1)) %>% 
@@ -126,11 +138,13 @@ dendro.p <- cowplot::plot_grid(v.dd, conx.p, b.dd, nrow = 1, align = "h", axis =
 dendro.p
 ```
 
-
+Plot the shifts in mean relative abundance for the set of differentially abundant OTUs across time points
 ```{r}
+# Load DESeq2 results
 v.dao <- readRDS("../Data/v_deseq_batch.RDS")
 b.dao <- readRDS("../Data/16S_deseq_batch.RDS")
 
+# Calculate the aggregated relative abundances for vOTUs
 v.means <- v.dao %>% 
   mutate(TemporalEnrichment = fct_relevel(TemporalEnrichment, "NS")) %>% 
   inner_join(v.otu.tidy, by = "OTU_ID") %>% 
@@ -141,6 +155,7 @@ v.means <- v.dao %>%
   summarise(MeanRelAb = mean(AggRelAb)) %>% 
   mutate(Set = "vOTUs\n(Virome)")
 
+# Calculate the aggregated relative abundances for 16S OTUs
 b.means <- b.dao %>% 
   mutate(TemporalEnrichment = fct_relevel(TemporalEnrichment, "NS")) %>% 
   inner_join(b.otu.tidy, by = "OTU_ID") %>% 
@@ -151,6 +166,7 @@ b.means <- b.dao %>%
   summarise(MeanRelAb = mean(AggRelAb)) %>% 
   mutate(Set = "16S OTUs\n(Total MG)")
 
+# Plot 
 mean.ab.p <- rbind(v.means, b.means) %>% 
   mutate(Set = fct_relevel(Set, "vOTUs\n(Virome)")) %>% 
   ggplot(aes(Month, MeanRelAb, fill = TemporalEnrichment)) +
@@ -170,12 +186,13 @@ mean.ab.p <- rbind(v.means, b.means) %>%
 mean.ab.p
 ```
 
+Put it all together
 ```{r}
 top <- cowplot::plot_grid(dendro.p, mean.ab.p + theme(legend.position = "none"), nrow = 1, rel_widths = c(8,6), labels = c("A", "B"), label_size = 20)
 top
 ```
 
-This part of the code needs the mean.ab.p and nut.heat.p plots (both coming from the nutrients.Rmd notebook) to be loaded in the environment
+Add the nutrient heatmap. This part of the code needs the mean.ab.p and nut.heat.p plots (both coming from the nutrients.Rmd notebook) to be loaded in the environment
 ```{r}
 #679:708
 bottom <- cowplot::plot_grid(mean.ab.p, nut.heat.p, rel_widths = c(2,3))
@@ -184,13 +201,15 @@ bottom
 cowplot::plot_grid(top, nut.heat.p, ncol = 1, rel_heights = c(9,11))
 ```
 
+Get the taxonomic patterns of the set of differentially abundant vOTUs and 16S OTUs
 ```{r}
+#Subset the significant OTUs
 v.sig <- v.dao %>% 
   filter(p.adjusted < 0.05) 
-
 b.sig <- b.dao %>% 
   filter(p.adjusted < 0.05)
 
+# Plot viral taxonomy
 a <- v.sig %>% 
   filter(Family != "Unassigned" & !is.na(Family) & Family != "Mixed") %>% 
   ggplot(aes(Family, fill = TemporalEnrichment)) +
@@ -204,8 +223,7 @@ a <- v.sig %>%
   theme(text = element_text(size = 15),
         legend.position = "top")
 
-a
-
+# Plot putative host taxonomy
 b <- v.sig %>% 
   filter(HostPhylum != "Unassigned" & !is.na(HostPhylum) & HostPhylum != "Mixed") %>% 
   ggplot(aes(HostPhylum, fill = TemporalEnrichment)) +
@@ -217,9 +235,13 @@ b <- v.sig %>%
   theme_light() +
   theme(text = element_text(size = 15), 
         legend.position = "none")
-b
 
+# Plot 16S taxonomy
 c <- b.sig %>% 
+  mutate(PhyClass = fct_recode(PhyClass, 
+                               "Unclassified Proteobacteria" = "unclass_Proteobacteria",
+                               "Candidate Division WPS-1" = "candidate division WPS-1")) %>% 
+  mutate(PhyClass = fct_relevel(PhyClass, "Unclassified Proteobacteria", "Gammaproteobacteria", "Deltaproteobacteria", "Betaproteobacteria", "Alphaproteobacteria")) %>% 
   ggplot(aes(PhyClass, fill = TemporalEnrichment)) +
   geom_bar() +
   scale_fill_manual(values = RColorBrewer::brewer.pal(4, "Paired")[3:4]) +
@@ -230,8 +252,8 @@ c <- b.sig %>%
   theme(text = element_text(size = 15),
         legend.position = "none")
 
-c
 
+# Put it all together
 cowplot::plot_grid(a,b,c,
                    ncol = 1,
                    align = "v",

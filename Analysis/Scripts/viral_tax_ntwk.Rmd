@@ -1,10 +1,18 @@
+---
+title: "vir_tmg_comparison"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Figure 3
+
+Load libraries
 ```{r}
 library(GGally)
 library(cowplot)
 library(tidyverse)
 ```
 
-
+Load vcontact2 data
 ```{r}
 nodes <- readRDS("../Data/ntwk_nodes.RDS")
 edges <- readRDS("../Data/ntwk_edges.RDS")
@@ -13,6 +21,7 @@ genome.master <- readRDS("../Data/genome_vc_master.RDS")
 refseq.all <- readRDS("../Data/refseq_host_tax.RDS")
 ```
 
+Load vOTU info and reformat
 ```{r}
 otu <- readRDS("../Data/virome_count_75_mtx.RDS")
 map <- readRDS("../Data/full_map.RDS")
@@ -20,7 +29,6 @@ map <- filter(map, Keep)
 
 otu <- otu[, colnames(otu) %in% map$SampleID]
 otu <- otu[rowSums(otu)> 0, ]
-dim(otu)  
 
 b.ids <- readRDS("../Data/bulk_ids.RDS") 
 b.ids <- b.ids[b.ids %in% rownames(otu)]
@@ -28,13 +36,11 @@ b.ids <- b.ids[b.ids %in% rownames(otu)]
 v.ids <- readRDS("../Data/vir_ids.RDS")
 v.ids <- v.ids[v.ids %in% rownames(otu)]
 
-length(v.ids)
-length(b.ids)
-
 b.only.ids <- b.ids[!b.ids %in% v.ids]
 b.shared.ids <- b.ids[b.ids %in% v.ids]
 ```
 
+Plot vcontact newtork with all vOTUs that were assigned to a cluster. Color-code based on whether the vOTU came from RefSeq, viromes, or total MGs.
 ```{r}
 clstrd.nodes <- nodes %>% 
   left_join(genome.master, by = "Genome") %>% 
@@ -57,6 +63,7 @@ ntwk.p <- clstrd.nodes %>%
 ntwk.p
 ```
 
+Make the legend for network
 ```{r}
 legend.p <- data.frame(Type = c("RefSeq", "Total MG", "Virome"),
            Value = 1:3) %>% 
@@ -69,6 +76,8 @@ legend.p <- data.frame(Type = c("RefSeq", "Total MG", "Virome"),
 
 legend.p
 ```
+
+Plot the number of viral clusters detected in each profiling method
 ```{r}
 vc.p <- genome.master %>%
   mutate(BULK = Genome %in% b.ids,
@@ -102,7 +111,10 @@ vc.p <- genome.master %>%
   
 vc.p
 ```
+
+Plot the subnetwork of vOTUs clustered with RefSeq genomes and color-code by putative host taxonomy
 ```{r}
+#Generate data frame with the host classification for each vOTU
 host.phy.clust <- genome.master %>% 
   filter(Source == "biochar") %>% 
   select(Genome, VC, VC.Status) %>% 
@@ -111,9 +123,6 @@ host.phy.clust <- genome.master %>%
   group_by(HostPhylum) %>% 
   count() %>% 
   ungroup() 
-
-
-host.phy.clust
 
 host.phy.nodes <- clstrd.nodes %>% 
   left_join(select(clstr.master, VC, ClstrComp), by = "VC") %>% 
@@ -124,11 +133,12 @@ host.phy.nodes <- clstrd.nodes %>%
   mutate(HostPhylum2 = fct_relevel(HostPhylum2, "Proteobacteria", "Actinobacteria", "Bacteroidetes","Firmicutes", "Other", "This Study", after = Inf)) %>% 
    filter(Source == "refseq" | ClstrComp == "both")
 
+# Plot
 ntwk.host <- host.phy.nodes %>% 
   ggplot(aes(x, y)) +
   geom_line(data = filter(edges, Genome %in% host.phy.nodes$Genome), aes(group = Pair), alpha = 0.1, color = "gray25", size = 0.5) +
   geom_point(alpha = 0.8, size = 2, shape = 16, aes(color = HostPhylum2)) +
-  scale_color_manual(name = "Host Phylum", values = c(RColorBrewer::brewer.pal(4, "Set2")[c(4,1,2,3)], "gray75", "gray10")) +
+  scale_color_manual(name = "Host Phylum", values = c(RColorBrewer::brewer.pal(8, "Set2")[c(6,1,2,3)], "gray75", "gray10")) +
   theme_minimal() +
   theme(text = element_text(size = 15), 
         axis.text = element_blank(),
@@ -139,6 +149,7 @@ ntwk.host <- host.phy.nodes %>%
 ntwk.host
 ```
 
+Plot the distribution of phyla across putative hosts in each profiling method
 ```{r}
 host.bar.p <- genome.master %>% 
   filter(Source == "biochar") %>% 
@@ -161,7 +172,7 @@ host.bar.p <- genome.master %>%
   mutate(HostPhylum = fct_relevel(HostPhylum, "Proteobacteria", "Actinobacteria", "Bacteroidetes","Firmicutes")) %>% 
   ggplot(aes(Extraction, n, fill = HostPhylum)) +
   geom_bar(stat = "identity", position = "stack") +
-  scale_fill_manual(name = "Host Phylum", values = c(RColorBrewer::brewer.pal(4, "Set2")[c(4,1,2,3)], "gray75", "gray10")) +
+  scale_fill_manual(name = "Host Phylum", values = c(RColorBrewer::brewer.pal(8, "Set2")[c(6,1,2,3)], "gray75", "gray10")) +
   ylab("Number\nof vOTUs") +
   #coord_flip() +
   theme_minimal() +
@@ -172,7 +183,10 @@ host.bar.p <- genome.master %>%
 
 host.bar.p
 ```
+
+Plot the subnetwork of vOTUs clustered with RefSeq genomes and color-code by putative viral taxonomy
 ```{r}
+#Generate data frame with the viral family classification for each vOTU
 vir.fam.clust <- genome.master %>% 
   filter(Source == "biochar") %>% 
   select(Genome, VC, VC.Status) %>% 
@@ -194,8 +208,6 @@ vir.fam.clust <- genome.master %>%
                               "Myoviridae",
                               "Unclassified Caudovirales")) 
 
-vir.fam.clust   
-
 vir.fam.nodes <- clstrd.nodes %>% 
   left_join(select(clstr.master, VC, ClstrComp), by = "VC") %>% 
   left_join(refseq.all, by = "Genome") %>% 
@@ -212,12 +224,13 @@ vir.fam.nodes <- clstrd.nodes %>%
   left_join(vir.fam.clust, by = c("Family2" = "Family")) %>% 
   filter(Source == "refseq" | ClstrComp == "both")
 
+# Plot
 ntwk.vir <-  vir.fam.nodes %>% 
   ggplot(aes(x, y)) +
   geom_line(data = filter(edges, Genome %in% vir.fam.nodes$Genome), aes(group = Pair), alpha = 0.1, color = "gray25", size = 0.5) +
   geom_point(alpha = 0.8, size = 2, shape = 16, aes(color = Family2)) +
   scale_color_manual(name = "Virus Family",
-                    values = c(RColorBrewer::brewer.pal(8, "Set2")[c(5,6,7)],"gray75", "gray10")) +
+                    values = c(RColorBrewer::brewer.pal(8, "Set2")[c(4,5)], "slateblue4", "gray75", "gray10")) +
   theme_minimal() +
   theme(text = element_text(size = 15), 
         axis.text = element_blank(),
@@ -228,7 +241,7 @@ ntwk.vir <-  vir.fam.nodes %>%
 ntwk.vir
 ```
 
-
+Plot the distribution of viral families in each profiling method
 ```{r}
 vir.fam.p <- genome.master %>% 
   filter(Source == "biochar") %>% 
@@ -257,7 +270,7 @@ vir.fam.p <- genome.master %>%
   ggplot(aes(Extraction, n, fill = Family)) +
   geom_bar(stat = "identity", position = "stack") +
   scale_fill_manual(name = "Virus Family",
-                    values = c(RColorBrewer::brewer.pal(8, "Set2")[c(5,6,7)],"gray75", "gray10")) +
+                    values = c(RColorBrewer::brewer.pal(8, "Set2")[c(4,5)], "slateblue4", "gray75", "gray10")) +
   ylab("Number\nof vOTUs") +
   #coord_flip() +
   theme_minimal() +
@@ -268,6 +281,8 @@ vir.fam.p <- genome.master %>%
 
 vir.fam.p
 ```
+
+Put it all together
 ```{r}
 #619:1178
 whole.bar <- plot_grid(get_legend(legend.p), vc.p, ncol = 1, rel_heights = c(4,5))

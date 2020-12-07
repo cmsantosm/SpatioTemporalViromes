@@ -1,11 +1,21 @@
+---
+title: "experimental_design"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Supplementary Figure 1
+
+Load libraries
 ```{r}
 library(tidyverse)
 ```
 
+Load data
 ```{r}
 map <- readRDS("../Data/full_map.RDS")
 plot.des <- readRDS("../Data/plot_design.RDS")
 
+# Make a data frame with all the info for each of the plots samples
 sampled.plots <- map %>% 
   group_by(Position_x_mts, Position_y_mts, BchNtrFull, BchNtr, BiocharFull, NitrogenFull) %>% 
   count() %>% 
@@ -18,6 +28,7 @@ sampled.plots <- map %>%
   mutate(Rank = 1:nrow(.))
 ```
 
+Plot the spatial arrangement of sampled plots in the field
 ```{r}
 field.p <- plot.des %>% 
   mutate(Nitrogen = case_when(Nitrogen == "H" ~ "225 lbs N/acre",
@@ -38,6 +49,7 @@ field.p <- plot.des %>%
 field.p
 ```
 
+Plot the library construction methods used for each sample
 ```{r}
 map <- map %>% 
   mutate(Month = fct_recode(Month, 
@@ -68,7 +80,7 @@ lib.prep <- map %>%
 
 lib.prep
 ```
-
+Plot the timeline of the experiment
 ```{r}
 timeline <- tribble(
   ~Event, ~Date,
@@ -100,11 +112,9 @@ timeline.p <- timeline %>%
         axis.title = element_blank(),
         legend.position = "none",
         panel.grid = element_blank())
-  
-timeline.p
 ```
 
-
+Put everything together
 ```{r}
 ### 1298:517
 bottom <- cowplot::plot_grid(timeline.p, lib.prep, nrow = 1, rel_widths = c(2,1), labels = c("B", "C"), label_size = 20 )

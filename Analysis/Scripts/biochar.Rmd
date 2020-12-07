@@ -1,3 +1,11 @@
+---
+title: "biochar"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Supplementary Figure 9
+
+Load libraries
 ```{r}
 source("../../General/general_functions.R")
 library(ggdendro)
@@ -5,16 +13,19 @@ library(vegan)
 library(tidyverse)
 ```
 
+Load and format data
 ```{r}
 map <- readRDS("../Data/full_map.RDS")
 v.map <- filter(map, Extraction == "VFD" & Keep)
 b.map <- filter(map, Extraction == "BULK" & Keep)
 
+# vOTU profiles from viromes
 vfd.otu <- readRDS("../Data/virome_tpm_75_mtx.RDS")
 v.vfd.otu <- vfd.otu[,colnames(vfd.otu) %in% v.map$SampleID]
 v.vfd.otu <- v.vfd.otu[,match(colnames(v.vfd.otu), v.map$SampleID)] 
 v.vfd.otu.ra <- rel_ab(v.vfd.otu)
 
+# 16S profiles from Total MG
 rrna.otu <- readRDS("../Data/rrna_otu_filt.RDS")
 b.rrna.otu <- rrna.otu[,colnames(rrna.otu) %in% b.map$SampleID]
 b.rrna.otu <- b.rrna.otu[,match(colnames(b.rrna.otu), b.map$SampleID)]
@@ -22,18 +33,21 @@ b.rrna.otu.ra <- rel_ab(b.rrna.otu)
 ```
 
 
+Calculate the Bray-Curtis dissimilarities on Hellinger-transformed relative abundances
 ```{r}
 v.vfd.dist <- vegan::vegdist(vegan::decostand(t(v.vfd.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
 
 b.rrna.dist <- vegan::vegdist(vegan::decostand(t(b.rrna.otu.ra), method = "hellinger"), method = "bray") %>% as.matrix()
 ```
 
+Since the effect of biochar on viral communities is only detected after accounting for collection time point ("Month" variable) and W-E gradient ("Column" variable), we need to run a CAP that tests for the effect of biochar while controlling for these other two variables.
 ```{r}
+# Run the CAP and extract the values needed  for plotting
 v.cap <- vegan::capscale(as.dist(v.vfd.dist) ~ Biochar + Condition(Month + Column), data = v.map, add = T, na.action = na.omit)
-
 v.cap.axes <- cap_axes(v.cap, v.map)
 v.cap.eig <- cap_eigval(v.cap, v.map)
 
+#Plot
 v.bch.cap.p <- v.cap.axes %>% 
   mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
   ggplot(aes(CAP1, CAP2, color = BiocharFull, shape = Month)) +
@@ -45,18 +59,16 @@ v.bch.cap.p <- v.cap.axes %>%
   theme(text = element_text(size = 15))
 
 v.bch.cap.p
-
-# bch.legend <- cowplot::plot_grid(cowplot::get_legend(bch.cap.p), cowplot::get_legend(bch.hm.p), ncol = 1, rel_heights = c(5,2))
-# 
-# cowplot::plot_grid(bch.cap.p + theme(legend.position = "none"), bch.right, bch.legend, nrow = 1, rel_widths = c(2,1,1), labels = c("A","B"), label_size = 30)
 ```
 
+While the effect of biochar on bacterial communities is not significant, we still ran a CAP controlling for time point (the only variable significantly structuring the 16S data) to see if there was any discernable patterns
 ```{r}
+# Run the CAP and extract the values needed  for plotting
 b.cap <- vegan::capscale(as.dist(b.rrna.dist) ~ Biochar + Condition(Month), data = b.map, add = T, na.action = na.omit)
-
 b.cap.axes <- cap_axes(b.cap, b.map)
 b.cap.eig <- cap_eigval(b.cap, b.map)
 
+#Plot
 b.bch.cap.p <- b.cap.axes %>% 
   mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
   ggplot(aes(CAP1, CAP2, color = BiocharFull, shape = Month)) +
@@ -70,12 +82,14 @@ b.bch.cap.p <- b.cap.axes %>%
 b.bch.cap.p
 ```
 
+Identify the vOTUs differentially abundant across biochar treatments and inspect their abundance patterns
 ```{r}
+# Load DESeq results and format
 sig.bch <- readRDS("../Data/v_deseq_bch.RDS") %>% filter(p.adjusted < 0.05)
-
 tidy.otu <- v.vfd.otu.ra %>% 
   tidy_otu()
 
+# Generate a matrix displaying the mean z-transformed relative abundances of differentially abundant vOTUs across treatments
 bch.mtx <- tidy.otu %>% 
   filter(OTU_ID %in% sig.bch$OTU_ID) %>% 
   group_by(OTU_ID) %>% 
@@ -90,11 +104,11 @@ row.names(bch.mtx) <- bch.mtx$Biochar2
 bch.mtx <- bch.mtx[,-1]
 bch.mtx <- as.matrix(bch.mtx)
 
+# Calculate distances 
 bch.dist <- dist(bch.mtx)
 otu.dist <- dist(t(bch.mtx))
 
-bch.dist
-
+# Perform hierarchical clustering
 bch.dd <- as.dendrogram(hclust(as.dist(bch.dist), method = "complete"))
 bch.ddata_x <- dendro_data(bch.dd)
 bch.labs <- label(bch.ddata_x) %>% 
@@ -107,6 +121,7 @@ otu.labs <- label(otu.ddata_x) %>%
   rename("OTU_ID" = "label") %>% 
   rename("OTUOrder" = "x")
 
+# Plot a heatmap displaying the relative abundances patterns across biochar treatments
 bch.hm.p <- tidy.otu %>% 
   filter(OTU_ID %in% sig.bch$OTU_ID) %>% 
   group_by(OTU_ID) %>% 
@@ -130,6 +145,8 @@ bch.hm.p <- tidy.otu %>%
         axis.title.x = element_blank(),
         legend.position = "bottom")
 
+
+# Plot the hierarchical clustering dendogram
 bch.dd.p <- ggplot(segment(bch.ddata_x)) +
   geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
 
@@ -152,14 +169,13 @@ bch.dendo.p <- bch.dd.p +
         legend.position = "none")
 ```
 
-
+Put all plots together into one figure
 ```{r}
 left <- cowplot::plot_grid(v.bch.cap.p + theme(legend.position = "none"), 
                            b.bch.cap.p + theme(legend.position = "none"), 
                            nrow = 2,
                            labels = c("A","B"), 
                            label_size = 20)
-left
 
 right <- cowplot::plot_grid(bch.dendo.p, 
                             bch.hm.p + theme(legend.position = "none"), 
@@ -168,8 +184,6 @@ right <- cowplot::plot_grid(bch.dendo.p,
                             rel_heights = c(1,4),
                             labels = c("C"), 
                             label_size = 20)
-
-right
 
 bch.legend <- cowplot::plot_grid(cowplot::get_legend(v.bch.cap.p), cowplot::get_legend(bch.hm.p), ncol = 1, rel_heights = c(5,2))
 

@@ -1,3 +1,11 @@
+---
+title: "16S_otu_formatting"
+output: html_notebook
+---
+
+This notebook formats the data from sortmeRNA / RDP classifier pipeline
+
+Load libraries
 ```{r}
 source("../../General/general_functions.R")
 library(RDPutils)

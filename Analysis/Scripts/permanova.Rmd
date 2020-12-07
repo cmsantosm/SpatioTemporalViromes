@@ -1,3 +1,10 @@
+---
+title: "permanova"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Supplementary Tables 4 & 5
+
 Load libraries
 ```{r}
 source("../../General/general_functions.R")
@@ -22,54 +29,114 @@ b.rrna.otu <- b.rrna.otu[,match(colnames(b.rrna.otu), b.map$SampleID)]
 b.rrna.otu.ra <- rel_ab(b.rrna.otu)
 ```
 
-Perform PERMANOVA on all samples testing for Time Point, Biochar, and Plot Position (coded as Column and Row within the field)
+Calculate the Bray-Curtis dissimilarites on Hellinger-transformed relative abundances
 ```{r}
 v.vfd.dist <- vegan::vegdist(vegan::decostand(t(v.vfd.otu.ra), method = "hellinger"), method = "bray") %>% 
   as.matrix()
-v.vfd.pm <- vegan::adonis(as.dist(v.vfd.dist) ~ Month + Column + Biochar + Row,  data = v.map)$aov.tab %>% 
-  as.data.frame() %>% 
-  mutate(Term = row.names(.), Extraction = "VFD", Set = "vOTU") 
-
 b.rrna.dist <- vegan::vegdist(vegan::decostand(t(b.rrna.otu.ra), method = "hellinger"), method = "bray") %>% 
   as.matrix()
-b.rrna.pm <- vegan::adonis(as.dist(b.rrna.dist) ~ Month + Column + Biochar + Row,  data = b.map)$aov.tab  %>% 
-  as.data.frame() %>% 
-  mutate(Term = row.names(.), Extraction = "BULK", Set = "16S") 
 ```
 
-Subset August samples and perform PERMANOVA testing Nitrogen Concentration
+Since nitrogen applications were started after the first time point, we can only test the effect of nitrogen fertilizer concentration on the August subset.
 ```{r}
 aug.v.map <- filter(v.map, Month == "Aug")
 aug.b.map <- filter(b.map, Month == "Aug")
 
 aug.v.vfd.dist <- v.vfd.dist[row.names(v.vfd.dist) %in% aug.v.map$SampleID, colnames(v.vfd.dist) %in% aug.v.map$SampleID]
-aug.v.vfd.pm <- vegan::adonis(as.dist(aug.v.vfd.dist) ~ Column + Nitrogen,  data = aug.v.map)$aov.tab  %>% 
-  as.data.frame() %>% 
-  mutate(Term = row.names(.), Extraction = "VFD", Set = "vOTU") 
-
 aug.b.rrna.dist <- b.rrna.dist[row.names(b.rrna.dist) %in% aug.b.map$SampleID, colnames(b.rrna.dist) %in% aug.b.map$SampleID]
-aug.b.rrna.pm <- vegan::adonis(as.dist(aug.b.rrna.dist) ~ Column + Nitrogen,  data = aug.b.map)$aov.tab  %>% 
+```
+
+Perform individual PERMANOVAs testing the effect of each experimental factor (collection time point, biochar treatment, nitrogen concentration) and spatial variable (W-E position along block columns and N-S position along block rows) on community composition. Note that the spatial variables are coded as continuous variables.  
+```{r}
+# PERMANOVA for vOTU profiles in viromes
+v.pm.month <- vegan::adonis(as.dist(v.vfd.dist) ~ Month,  data = v.map)$aov.tab %>% 
   as.data.frame() %>% 
-  mutate(Term = row.names(.), Extraction = "BULK", Set = "16S") 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Month")
+
+v.pm.bch <- vegan::adonis(as.dist(v.vfd.dist) ~ Biochar,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Biochar")
+
+v.pm.col <- vegan::adonis(as.dist(v.vfd.dist) ~ Column,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Column")
+
+v.pm.row <- vegan::adonis(as.dist(v.vfd.dist) ~ Row,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Row")
+
+v.pm.nit <- vegan::adonis(as.dist(aug.v.vfd.dist) ~ Nitrogen,  data = aug.v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Nitrogen")
+
+
+# PERMANOVA for 16SOTU profiles in total MGs
+b.pm.month <- vegan::adonis(as.dist(b.rrna.dist) ~ Month,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Month")
+
+b.pm.bch <- vegan::adonis(as.dist(b.rrna.dist) ~ Biochar,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Biochar")
+
+b.pm.col <- vegan::adonis(as.dist(b.rrna.dist) ~ Column,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Column")
+
+b.pm.row <- vegan::adonis(as.dist(b.rrna.dist) ~ Row,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Row")
+
+b.pm.nit <- vegan::adonis(as.dist(aug.b.rrna.dist) ~ Nitrogen,  data = aug.b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Nitrogen")
+
+pmanova.single <- rbind(v.pm.month, v.pm.bch, v.pm.col, v.pm.row, v.pm.nit,
+                        b.pm.month, b.pm.bch, b.pm.col, b.pm.row, b.pm.nit)
+
+# Save supplementary table
+write.table(pmanova.single, "../Tables/pmanova_single.tsv", sep = "\t", quote = F, row.names = F)
 ```
 
-Compile results and make table
+Given that collection time point and W-E position had a significant effect on viral community composition, we performed new sets of PERMANOVAs testing biochar treatment or nitrogen fertilization regime while accounting for collection time point and/or W-E position
 ```{r}
-pmanova.df <- rbind(v.vfd.pm, filter(aug.v.vfd.pm, Term == "Nitrogen"),
-                b.rrna.pm, filter(aug.b.rrna.pm, Term == "Nitrogen")) %>% 
-  select(Term, everything()) %>% 
-  rename("Pval" = "Pr(>F)") %>% 
-  select(Term, R2, Pval, Set) %>% 
-  filter(Term != "Residuals") %>% 
-  filter(Term != "Total") %>% 
-  mutate(Term = fct_recode(Term, "Time Point" = "Month")) %>% 
-  mutate(Term = fct_relevel(Term, "Time Point", "Biochar", "Nitrogen", "Column", "Row")) %>% 
-  mutate(R2 = round(R2, digits = 3)) %>%
-  arrange(Set, Term)
-```
+# PERMANOVA for vOTU profiles in viromes
+v.pm.bch.month <- vegan::adonis(as.dist(v.vfd.dist) ~ Biochar + Month,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Biochar + Month")
 
-Save table
-```{r}
-write.table(pmanova.df, "../Tables/Table1.tsv", sep = "\t", quote = F, row.names = F)
-```
+v.pm.bch.col <- vegan::adonis(as.dist(v.vfd.dist) ~ Biochar + Column,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Biochar + Column")
 
+v.pm.bch.month.col <- vegan::adonis(as.dist(v.vfd.dist) ~ Biochar + Month + Column,  data = v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Biochar + Month + Column")
+
+v.pm.nit.col <- vegan::adonis(as.dist(aug.v.vfd.dist) ~ Nitrogen + Column,  data = aug.v.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "VIR", Set = "vOTU", Formula = "dist ~ Nitrogen + Column")
+
+# PERMANOVA for 16S OTU profiles in total MGs
+b.pm.bch.month <- vegan::adonis(as.dist(b.rrna.dist) ~ Biochar + Month,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Biochar + Month")
+
+b.pm.bch.col <- vegan::adonis(as.dist(b.rrna.dist) ~ Biochar + Column,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Biochar + Column")
+
+b.pm.bch.month.col <- vegan::adonis(as.dist(b.rrna.dist) ~ Biochar + Month + Column,  data = b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Biochar + Month + Column")
+
+b.pm.nit.col <- vegan::adonis(as.dist(aug.b.rrna.dist) ~ Nitrogen + Column,  data = aug.b.map)$aov.tab %>% 
+  as.data.frame() %>% 
+  mutate(Term = row.names(.), Extraction = "TMG", Set = "16SOTU", Formula = "dist ~ Nitrogen + Column")
+
+pmanova.multiple <- rbind(v.pm.bch.month, v.pm.bch.col, v.pm.bch.month.col, v.pm.nit.col,
+                          b.pm.bch.month, b.pm.bch.col, b.pm.bch.month.col, b.pm.nit.col)
+
+# Save supplementary table
+write.table(pmanova.multiple, "../Tables/pmanova_multiple.tsv", sep = "\t", quote = F, row.names = F)
+```

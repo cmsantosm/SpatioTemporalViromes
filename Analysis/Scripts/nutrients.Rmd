@@ -1,37 +1,44 @@
+---
+title: "nutrients"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Figure 4C and Supplementary Table 8
+
+Load libraries
 ```{r}
 library(broom)
 library(ggdendro)
 library(tidyverse)
 ```
 
-
+Load and format data
 ```{r}
 map <- readRDS("../Data/full_map.RDS")
-
 nutrients <- readRDS("../Data/nutrients.RDS")
-
 nutrients <- inner_join(map, select(nutrients, -Sample, -Extraction, - Month),by = c("SampleID2" = "SampleID")) 
 
+#Some measurements were only available for one month so we need to filter them out
 nutrients.tidy <- nutrients %>% 
   gather(key = "Variable", value = "Value", OMpct:MoisturePCT) %>% 
   filter(!Variable %in% c("ZincPPM", "ManganesePPM", "IronPPM", "CopperPPM", "SodiumPCT", "PotassiumPct", "PhosphorusNaHCO3ppm", "MagnesiumPCT", "CalciumPCT")) 
 
 n.nuts <- length(unique(nutrients.tidy$Variable))
-n.nuts
-
 n.samples <- length(unique(nutrients.tidy$SampleID))
-n.samples
 ```
 
+Test the effect of each experimental factor on the concentrations of each nutrient measured
 ```{r}
 nutrients.nest <- nutrients.tidy %>% 
   group_by(Variable) %>% 
   nest()
 
+# Function to run ANOVA 
 get_full_aov <- function(x) {
   aov(Value ~ Month + Biochar + Column + Row, data = x) %>% tidy()
 }
 
+# Run ANOVA and adjust p-values
 sup.table.nut <- nutrients.nest %>% 
   mutate(AOV = map(data, get_full_aov)) %>% 
   unnest(AOV) %>% 
@@ -40,14 +47,18 @@ sup.table.nut <- nutrients.nest %>%
   ungroup() %>% 
   select(-data)
 
+# Get significant terms
 sig.month <- sup.table.nut %>% 
   filter(adjusted.p < 0.05) %>% 
   filter(term == "Month")
 
+# Save supplementary table
 write.table(sup.table.nut, "../Tables/nutrients_anova.tsv", sep = "\t", quote = F, row.names = F)
 ```
 
+Perform hierarchical clustering on the z-transformed values 
 ```{r}
+# Generate a matrix of z-transformed values
 nut.mtx <- nutrients.tidy %>% 
   group_by(Variable) %>% 
   mutate(zValue = (Value - mean(Value))/sd(Value)) %>% 
@@ -59,14 +70,13 @@ row.names(nut.mtx) <- nut.mtx$SampleID
 nut.mtx <- nut.mtx[,-1]
 nut.mtx <- as.matrix(nut.mtx)
 
+# Calculate distance
 sample.dist <- dist(nut.mtx)
 nut.dist <- dist(t(nut.mtx))
 
-sample.dist
-
+# Perform hierarchical clustering
 sample.dd <- as.dendrogram(hclust(as.dist(sample.dist), method = "complete"))
 sample.ddata_x <- dendro_data(sample.dd)
-
 sample.labs <- label(sample.ddata_x) %>%
   rename("SampleID" = "label") %>%
   rename("SampleOrder" = "x") 
@@ -78,7 +88,7 @@ nut.labs <- label(nut.ddata_x) %>%
   rename("VariableOrder" = "x")
 ```
 
-
+Generate a master file for plotting
 ```{r}
 nutrients.master <- nutrients.tidy %>% 
   group_by(Variable) %>% 
@@ -107,7 +117,11 @@ nutrients.master <- nutrients.tidy %>%
                                 "Moisture (%)" = "MoisturePCT")) %>% 
   ungroup() %>% 
   mutate(Nutrients = ifelse(Variable %in% sig.month$Variable, paste("*", Nutrients), as.character(Nutrients)))
+```
 
+Get the individual plots
+```{r}
+### Dendogram
 v.p2 <- ggplot(segment(sample.ddata_x)) +
   geom_segment(aes(x=x, y=y, xend=xend, yend=yend))
 
@@ -125,8 +139,6 @@ v.dd <- v.p2 +
   scale_shape_manual(name = "Time Point", values = c(21,24)) +
   theme_classic() +
   theme(text = element_text(size = 15),
-        #legend.text = element_text(size = 15),
-        #legend.title = element_blank(),
         axis.text = element_blank(),
         axis.title = element_blank(),
         axis.line = element_blank(),
@@ -136,6 +148,8 @@ v.dd <- v.p2 +
 
 
 v.dd
+
+### Dendogram tip labels
 
  labs.p <- sample.labs.2 %>%
   ggplot() +
@@ -155,7 +169,7 @@ v.dd
 
 labs.p
 
-
+## Heatmap
 nut.p <- nutrients.master %>% 
   mutate(zValue = ifelse(abs(zValue) > 2, 2*sign(zValue), zValue)) %>% 
   mutate(Month2 = ifelse(Month == "Apr", 1, 2)) %>% 
@@ -166,7 +180,6 @@ nut.p <- nutrients.master %>%
                        guide = guide_colorbar(title.hjust = 0.5,
                                               title.vjust = 1,
                                               title.position = "top")) +
-  #facet_grid(Month ~ ., scales = "free") +
   theme_minimal() +
   theme(text = element_text(size = 15),
         #axis.text.y = element_text(hjust = 1),
@@ -177,8 +190,10 @@ nut.p <- nutrients.master %>%
         legend.position = "top") 
 
 nut.p  
+```
 
-
+Put it all together
+```{r}
 nut.heat.tmp <- cowplot::plot_grid(v.dd + theme(legend.position = "none"), 
                                    labs.p, 
                                    nut.p + theme(legend.position = "none"), 
@@ -191,3 +206,4 @@ leg.tmp <- cowplot::plot_grid(cowplot::get_legend(v.dd), cowplot::get_legend(nut
 nut.heat.p <- cowplot::plot_grid(nut.heat.tmp, leg.tmp, rel_widths = c(3,1))
 nut.heat.p
 ```
+

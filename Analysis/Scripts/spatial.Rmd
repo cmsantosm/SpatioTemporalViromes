@@ -1,11 +1,18 @@
+---
+title: "spatial"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Figure 5 and Supplementary Figures 7 & 8
+
+Load libraries
 ```{r}
 source("../../General/general_functions.R")
-#library(lsa)
-#library(broom)
 library(vegan)
 library(tidyverse)
 ```
 
+Load data and reformat
 ```{r}
 map <- readRDS("../Data/full_map.RDS")
 v.map <- filter(map, Extraction == "VFD" & Keep)
@@ -24,12 +31,16 @@ b.otu.ra <- rel_ab(b.otu)
 spatial.pal <- RColorBrewer::brewer.pal(4, "Purples") 
 ```
 
+Perform unconstrained PCoA
 ```{r}
+# Calculate Bray-Curtis dissimilarities on Hellinger-transformed relative abundances
 v.dist <- vegan::vegdist(vegan::decostand(t(v.otu.ra), method = "hellinger"), method = "bray")
 
+# Get PCoA values
 v.pcoa.axes <- pcoa_axes(as.matrix(v.dist), v.map)
 v.pcoa.eig <- pcoa_eigval(as.matrix(v.dist), v.map)
 
+# Plot
 v.pcoa.p <- v.pcoa.axes %>% 
   mutate(Biochar = strtrim(Sample, 2),
          Nitrogen = str_extract(Sample, "L|H")) %>% 
@@ -47,12 +58,50 @@ v.pcoa.p <- v.pcoa.axes %>%
   ylab(paste("PCo2 (", v.pcoa.eig$Eigval[2], "%)", sep = "")) +
   theme_light() +
   theme(text = element_text(size = 15),
-        #panel.border = element_blank(),
         legend.position = "top")
 
 v.pcoa.p
 ```
 
+Plot the same ordination colored by biochar and nitrogen ammendments to show the lack of patterns across the first and second axes
+```{r}
+# Color-coded by biochar treatment
+bch.p <- v.pcoa.axes %>% 
+  mutate(BiocharFull = fct_relevel(BiocharFull, "No Biochar", after = Inf)) %>% 
+  ggplot(aes(Axis.1, Axis.2)) +
+  geom_point(aes(fill = BiocharFull, shape = Month), 
+             size = 4, 
+             stroke = 1) +
+  scale_shape_manual(name = "Month", values = c(21,24)) +
+  scale_fill_brewer(name = "Biochar", palette = "Dark2") +
+  xlab(paste("PCo1 (", v.pcoa.eig$Eigval[1], "%)", sep = "")) +
+  ylab(paste("PCo2 (", v.pcoa.eig$Eigval[2], "%)", sep = "")) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "right")
+
+# Color-coded by nitrogen fertilizer concentration
+nit.p <- v.pcoa.axes %>% 
+  mutate(Nitrogen = case_when(Month == "Apr" ~ "Pre-Fertigation",
+                              Nitrogen == "H" ~ "225 lbs N/acre",
+                              Nitrogen == "L" ~ "150 lbs N/acre")) %>% 
+  mutate(Nitrogen = fct_relevel(Nitrogen, "Pre-Fertigation")) %>% 
+  ggplot(aes(Axis.1, Axis.2)) +
+  geom_point(aes(fill = Nitrogen, shape = Month), 
+             size = 4, 
+             stroke = 1) +
+  scale_shape_manual(name = "Month", values = c(21,24)) +
+  scale_fill_manual(values = c("white", "gray75", "gray25")) +
+  xlab(paste("PCo1 (", v.pcoa.eig$Eigval[1], "%)", sep = "")) +
+  ylab(paste("PCo2 (", v.pcoa.eig$Eigval[2], "%)", sep = "")) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        legend.position = "right")
+
+supp.votu <- cowplot::plot_grid(bch.p, nit.p, nrow = 2, align = "v", labels = c("A", "B"), label_size = 20)
+supp.votu
+```
+Plot the distribution of sampled plots in the field
 ```{r}
 field.p <- plot.des %>% 
   ggplot(aes(Position_x_mts, Position_y_mts)) +
@@ -71,6 +120,7 @@ field.p <- plot.des %>%
 field.p
 ```
 
+Calculate the pairwise W-E distances between plots
 ```{r}
 tmp <- map %>% filter(!is.na(Sample)) %>% 
   group_by(Sample, Position_x_mts) %>% 
@@ -84,6 +134,7 @@ field.dist <- data.frame(FieldDist = tmp$Position_x_mts,
 
 field.dist <- as.matrix(field.dist)
 
+# Generate a data frame with W-E distances for plotting
 field.tidy <- field.dist  %>%
   as.matrix() %>%
   as.data.frame() %>%
@@ -93,12 +144,14 @@ field.tidy <- field.dist  %>%
 
 ```
 
+Perform Mantel tests comparing viral community composition dissimilarities vs spatial distance (calculated within each month)
 ```{r}
 v.map.apr <- filter(v.map, Month == "Apr")
 v.map.aug <- filter(v.map, Month == "Aug")
 
 v.dist <- as.matrix(v.dist)
 
+# April samples
 v.apr.dist <- v.dist[match(v.map.apr$SampleID,row.names(v.dist)),match(v.map.apr$SampleID,colnames(v.dist))]
 row.names(v.apr.dist) <- str_split(row.names(v.apr.dist), "_", n = 2, simplify = T)[,1]
 colnames(v.apr.dist) <- str_split(colnames(v.apr.dist), "_", n = 2, simplify = T)[,1]
@@ -106,6 +159,7 @@ v.apr.field.dist <- field.dist[match(row.names(v.apr.dist), row.names(field.dist
 v.apr.mant <- vegan::mantel(as.dist(v.apr.dist), as.dist(v.apr.field.dist), permutations = 9999, method = "pearson") 
 v.apr.mant
 
+# August samples
 v.aug.dist <- v.dist[match(v.map.aug$SampleID,row.names(v.dist)),match(v.map.aug$SampleID,colnames(v.dist))]
 row.names(v.aug.dist) <- str_split(row.names(v.aug.dist), "_", n = 2, simplify = T)[,1]
 colnames(v.aug.dist) <- str_split(colnames(v.aug.dist), "_", n = 2, simplify = T)[,1]
@@ -113,6 +167,7 @@ v.aug.field.dist <- field.dist[match(row.names(v.aug.dist), row.names(field.dist
 v.aug.mant <- vegan::mantel(as.dist(v.aug.dist), as.dist(v.aug.field.dist), permutations = 9999, method = "pearson") 
 v.aug.mant
 
+# Generate a data frame with correlation values for plotting
 v.mant.df <- data.frame(Month.x = c("Apr", "Aug"),
                       R = c(v.apr.mant$statistic,v.aug.mant$statistic),
                       P = c(v.apr.mant$signif, v.aug.mant$signif)) %>% 
@@ -121,7 +176,10 @@ v.mant.df <- data.frame(Month.x = c("Apr", "Aug"),
   mutate(Label = paste(Month.x, r, Pval, sep = "\n")) %>% 
   mutate(Label = str_replace_all(Label, "==", "="))
 ```
+
+Plot the correlation between W-E distances and vOTU Bray-Curtis dissimilarities
 ```{r}
+# Generate a data frame with Bray-Curtis dissimilarities for plotting
 v.beta.tidy <- as.matrix(v.dist) %>%
   as.data.frame() %>%
   mutate(SampleID.x = row.names(.)) %>%
@@ -133,7 +191,7 @@ v.beta.tidy <- as.matrix(v.dist) %>%
 
 v.pair.tidy <- inner_join(v.beta.tidy, field.tidy, by = c("Sample.x", "Sample.y"))
 
-
+# Plot
 v.cor.p <- v.pair.tidy %>% 
   ggplot(aes(FieldDistance, BetaDistance)) +
   geom_point(aes(color = Month.x)) +
@@ -163,12 +221,16 @@ v.cor.p <- v.pair.tidy %>%
 v.cor.p
 ```
 
+Plot the abundance patterns of spatially structured vOTUs. 
 ```{r}
+# Load DESeq2 results
 sig.spatial <- read.table("../Tables/sig_vOTUs_spatial.tsv", sep = "\t", header = T)
 
+# Get the relative abundances
 v.tidy.otu <- v.otu.ra %>% 
   tidy_otu()
 
+# Data frame to plot the W-E position for each sampled column
 col.tmp <- v.tidy.otu %>% 
   inner_join(sig.spatial, by = "OTU_ID") %>% 
   inner_join(v.map, by = "SampleID") %>% 
@@ -179,7 +241,7 @@ col.tmp <- v.tidy.otu %>%
   ungroup() %>% 
   mutate(SpatialEnrichment = fct_relevel(SpatialEnrichment, "West-Enriched")) 
 
-
+# Plot the aggregated relative abundances within a single column and identify which vOTUs were also affected by collection time point
 bar.p <- v.tidy.otu %>% 
   inner_join(sig.spatial, by = "OTU_ID") %>% 
   inner_join(map, by = "SampleID") %>% 
@@ -197,7 +259,6 @@ bar.p <- v.tidy.otu %>%
   scale_shape(guide = F) +
   ylab("Mean Rel. Ab.") +
   xlab("West-East Position") +
-  #facet_grid(Mont ~ SpatialEnrichment, space = "free", scales = "free") +
   facet_grid(. ~ SpatialEnrichment + Month) +
   theme_light() +
   theme(text=element_text(size = 15),
@@ -220,7 +281,7 @@ cowplot::plot_grid(b, bar.p, nrow = 2, rel_heights = c(7,6),labels = c(NA, "D"),
 ```
 
 Do the same for the 16S rRNA gene communities extracted from Total MG
-
+Plot PCoA
 ```{r}
 b.dist <- vegan::vegdist(vegan::decostand(t(b.otu.ra), method = "hellinger"), method = "bray")
 
@@ -240,6 +301,7 @@ b.pcoa.p <- b.pcoa.axes %>%
 b.pcoa.p
 ```
 
+Perform Mantel tests comparing 16S community composition dissimilarities vs spatial distance (calculated within each month)
 ```{r}
 b.map.apr <- filter(b.map, Month == "Apr")
 b.map.aug <- filter(b.map, Month == "Aug")
@@ -268,6 +330,7 @@ b.mant.df <- data.frame(Month.x = c("Apr", "Aug"),
   mutate(Label = paste(Month.x, r, Pval, sep = "\n")) %>% 
   mutate(Label = str_replace_all(Label, "==", "="))
 ```
+Plot the correlation between W-E distances and 16S OTU Bray-Curtis dissimilarities
 ```{r}
 b.beta.tidy <- as.matrix(b.dist) %>%
   as.data.frame() %>%
@@ -279,7 +342,6 @@ b.beta.tidy <- as.matrix(b.dist) %>%
   filter(Month.x == Month.y)
 
 b.pair.tidy <- inner_join(b.beta.tidy, field.tidy, by = c("Sample.x", "Sample.y"))
-
 
 b.cor.p <- b.pair.tidy %>% 
   ggplot(aes(FieldDistance, BetaDistance)) +
@@ -301,7 +363,7 @@ b.cor.p <- b.pair.tidy %>%
             parse = F) +
   scale_color_manual(values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6)]) +
   scale_fill_manual(values = RColorBrewer::brewer.pal(6, "Paired")[c(5,6)]) +
-  ylab("vOTUs (Virome)\nPairwise B-C Dissimilarity") +
+  ylab("16S OTUs (Total MG)\nPairwise B-C Dissimilarity") +
   xlab("Pairwise W-E Distance (m)") +
   theme_bw() +
   theme(text = element_text(size = 15),
@@ -309,14 +371,16 @@ b.cor.p <- b.pair.tidy %>%
 
 b.cor.p
 ```
+Put it all together
 ```{r}
-#870:373
-cowplot::plot_grid(b.pcoa.p, b.cor.p,
+supp.16S <- cowplot::plot_grid(b.pcoa.p, b.cor.p,
                    nrow = 1,
                    align = "h",
                    axis = "l",
                    rel_widths = c(5,4),
                    labels = c("A", "B"), label_size = 20)
 
+supp.16S
 ```
+
 

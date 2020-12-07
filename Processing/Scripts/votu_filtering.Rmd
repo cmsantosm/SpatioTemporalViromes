@@ -1,3 +1,10 @@
+---
+title: "votu_filtering"
+output: html_notebook
+---
+
+This notebook formats the vOTU abundance tables to include only those vOTUs with >= 0.75 coverage
+
 Load libraries
 ```{r}
 library(tidyverse)

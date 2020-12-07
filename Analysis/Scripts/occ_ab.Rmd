@@ -1,8 +1,18 @@
+---
+title: "occ_ab"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Figure 2 and Supplementary Figures 4 & 5
+
 Load libraries
 ```{r}
+source("../../General/facet_zoom_patch.R")
+source("../../General/general_functions.R")
 library(vegan)
 library(ggforce)
 library(eulerr)
+library(ggalluvial)
 library(tidyverse)
 ```
 Load data
@@ -34,26 +44,20 @@ b.otu <- b.otu[rowSums(b.otu)>0,]
 
 ```
 
-Get the accumulation curves for both datasets
+Get the accumulation curves for both datasets and reformat
 ```{r}
 v.sp <- specaccum(t(v.otu), method = "random", permutations = 100)
-
 v.perm <- v.sp$perm
-
 v.perm.tidy <- as.tibble(v.perm) %>% 
   mutate(Sites = 1:nrow(.)) %>% 
   gather(key = "Permutation", value = "Species", -Sites) 
-
 v.richness <- data.frame(Sites = v.sp$sites, Species = v.sp$richness)
 
 b.sp <- specaccum(t(b.otu), method = "random", permutations = 100)
-
 b.perm <- b.sp$perm
-
 b.perm.tidy <- as.tibble(b.perm) %>% 
   mutate(Sites = 1:nrow(.)) %>% 
   gather(key = "Permutation", value = "Species", -Sites) 
-
 b.richness <- data.frame(Sites = b.sp$sites, Species = b.sp$richness)
 ```
 
@@ -68,7 +72,7 @@ richness <- rbind(mutate(b.richness, Extraction = "Total MG"),
 acc.p <- ggplot(perm.tidy, aes(Sites, Species, color = Extraction)) +
   geom_point(alpha = 0.2) +
   geom_line(data = richness, size = 1) +
-  facet_zoom2(y = Extraction == "Total MG", zoom.size = 1, show.area = T) +
+  facet_zoom(y = Extraction == "Total MG", zoom.size = 1, show.area = T) +
   scale_color_manual(name = "", values = pal) +
   xlim(0,16) +
   ylab("Cumulative Richness\n(Number of vOTUs)") +
@@ -81,7 +85,7 @@ acc.p <- ggplot(perm.tidy, aes(Sites, Species, color = Extraction)) +
 acc.p
 ```
 
-Plot euler diagram
+Plot Euler diagram
 ```{r}
 euler.p <- plot(euler(list("Total\nMG" = b.ids, Virome = v.ids)),
      fills = pal[c(1,2,1)],
@@ -95,8 +99,8 @@ euler.p <- plot(euler(list("Total\nMG" = b.ids, Virome = v.ids)),
 
 euler.p
 ```
-
-Calculate occupancy and abundance within month subsets (occ.df.month) and identify which OTUs were present in each month for both profiling methods (sets.per.month)
+This section corresponds to Figure 2 and show the abundance-occupancy patterns of all vOTUs derived from viromes (in blue), and the abundance-occupancy patterns of the set of 94 vOTUs detected in both viromes and Total MGs (red)
+Calculate occupancy and abundance within month subsets (occ.df.month) and identify which vOTUs were present in each month for both profiling methods (sets.per.month)
 ```{r}
 sets.per.month <- otu.tidy %>% 
   inner_join(map, by = "SampleID") %>% 
@@ -111,7 +115,7 @@ sets.per.month <- otu.tidy %>%
   count() %>% 
   select(-n)
 
-occ.df.month <- v.otu.tidy %>% 
+v.occ.df.month <- v.otu.tidy %>% 
   group_by(SampleID) %>% 
   mutate(RelAbundance = Abundance/sum(Abundance)) %>% 
   group_by(Month, OTU_ID) %>% 
@@ -125,10 +129,10 @@ occ.df.month <- v.otu.tidy %>%
 
 Plot abundance-occupancy curve
 ```{r}
-curve.p <- occ.df.month %>% 
+v.curve.p <- v.occ.df.month %>% 
   ggplot(aes(MeanAbundance, Occupancy2)) +
-  geom_jitter(data = filter(occ.df.month, Set == "Virome"), color = pal[2], alpha = 0.5) +
-  geom_jitter(data = filter(occ.df.month, Set == "Both"), color = "white", fill = pal[1], shape = 21) +
+  geom_jitter(data = filter(v.occ.df.month, Set == "Virome"), color = pal[2], alpha = 0.5) +
+  geom_jitter(data = filter(v.occ.df.month, Set == "Both"), color = "white", fill = pal[1], shape = 21) +
   xlab("Mean Rel. Abund. (log10)") +
   ylab("Occupancy\n(% Samples)") + 
   scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
@@ -136,11 +140,11 @@ curve.p <- occ.df.month %>%
   theme(text = element_text(size = 15),
         panel.border = element_blank())
 
-curve.p
+v.curve.p
 ```
 Plot occupancy levels
 ```{r}
-occ.p <- occ.df.month %>% 
+v.occ.p <- v.occ.df.month %>% 
   mutate(Set = fct_relevel(Set, "Virome")) %>% 
   group_by(Set, Occupancy2) %>% 
   dplyr::count() %>% 
@@ -153,22 +157,20 @@ occ.p <- occ.df.month %>%
   scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
   coord_flip() +
   ylab("% vOTUs") +
-  
   theme_light() +
   theme(text = element_text(size = 15), 
         #axis.text.y = element_blank(),
         axis.title.y = element_blank(),
         panel.border = element_blank(),
         legend.position = "none")
-occ.p
+v.occ.p
 ```
 Plot abundance density plots
 ```{r}
-ab.p <- occ.df.month %>% 
+v.ab.p <- v.occ.df.month %>% 
   ggplot(aes(MeanAbundance)) +
   geom_density(fill = pal[2], color = pal[2]) +
-  #geom_density(data = filter(occ.df.month, OTU_ID %in% b.ids), fill = pal[1], color = "black", alpha = 0.8, size = 1) +
-  geom_density(data = filter(occ.df.month, Set == "Both"), fill = pal[1], color = "white", alpha = 0.8) +
+  geom_density(data = filter(v.occ.df.month, Set == "Both"), fill = pal[1], color = "white", alpha = 0.8) +
   xlab("Mean Abundance (log10)") +
   ylab("Density") +
   scale_y_continuous() +
@@ -178,14 +180,14 @@ ab.p <- occ.df.month %>%
         axis.text.y= element_blank(),
         axis.title = element_blank(),
         panel.border = element_blank())
-ab.p
+v.ab.p
 ```
 Make final figure
 ```{r}
-left <- cowplot::plot_grid(ab.p, curve.p, nrow = 2, align = "v", rel_heights = c(1,2), labels = "B", label_size = 20)
+left <- cowplot::plot_grid(v.ab.p, v.curve.p, nrow = 2, align = "v", rel_heights = c(1,2), labels = "B", label_size = 20)
 left
 
-right <- cowplot::plot_grid(euler.p, occ.p, nrow = 2, rel_heights = c(1,2), labels = "C", label_size = 20)
+right <- cowplot::plot_grid(euler.p, v.occ.p, nrow = 2, rel_heights = c(1,2), labels = "C", label_size = 20)
 right
 
 bottom <- cowplot::plot_grid(left, right, nrow = 1, align = "h", axis = "tb", rel_widths = c(3,2))
@@ -193,4 +195,299 @@ bottom
 
 ###666:795
 cowplot::plot_grid(acc.p, bottom, nrow = 2, rel_heights = c(7, 10), labels = "A", label_size = 20)
+```
+
+The following code chunks correspond to the abundance-occupancy analyses for Supplementary Figure 5 and shows all 
+
+Abundance-occupancy patterns of vOTUs detected in viromes
+```{r}
+# Plot ab-occ curve
+v.curve.p <- v.occ.df.month %>% 
+  ggplot(aes(MeanAbundance, Occupancy2)) +
+  geom_jitter(color = "gray25", alpha =0.8, shape = 1) +
+  xlab("Mean Rel. Abund. (log10)") +
+  ylab("Occupancy\n(% Samples)") + 
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank())
+
+# Plot occupancy barplot
+v.occ.p <- v.occ.df.month %>% 
+  group_by(Occupancy2) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(pOTU = n/sum(n) * 100) %>% 
+  ggplot(aes(Occupancy2, pOTU)) +
+  geom_bar(stat = "identity", size = 0.25, color = "gray25") +
+  scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
+  coord_flip() +
+  ylab("% vOTUs") +
+  theme_light() +
+  theme(text = element_text(size = 15), 
+        #axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "none")
+
+# Plot abundance density curve
+v.ab.p <- v.occ.df.month %>% 
+  ggplot(aes(MeanAbundance)) +
+  geom_density(fill = "gray25", color = "gray25") +
+  xlab("Mean Abundance (log10)") +
+  ylab("Density") +
+  scale_y_continuous() +
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.y= element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_blank())
+
+# Put plots together
+v.left <- cowplot::plot_grid(v.ab.p, v.curve.p, nrow = 2, align = "v", rel_heights = c(1,2), label_size = 20)
+v.right <- cowplot::plot_grid(NA, v.occ.p, nrow = 2, rel_heights = c(1,2), label_size = 20)
+v.vir <- cowplot::plot_grid(v.left, v.right, nrow = 1, align = "h", axis = "tb", rel_widths = c(3,2))
+v.vir
+```
+
+Abundance-occupancy patterns of vOTUs detected in total MGs
+```{r}
+# Calculate occupancy and abundance within month subsets
+b.occ.df.month <- b.otu.tidy %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAbundance = Abundance/sum(Abundance)) %>% 
+  group_by(Month, OTU_ID) %>% 
+  summarise(Occupancy = sum(Abundance > 0), 
+            Occupancy2 = sum(Abundance > 0)/n() * 100,
+            MeanAbundance = mean(RelAbundance),
+            MeanRelAbundance = mean(RelAbundance)) %>% 
+  filter(Occupancy > 0) %>% 
+  inner_join(sets.per.month, by = c("Month", "OTU_ID"))
+
+# Plot ab-occ curve
+b.curve.p <- b.occ.df.month %>% 
+  ggplot(aes(MeanAbundance, Occupancy2)) +
+  geom_jitter(color = "gray25", alpha =0.8, shape = 1) +
+  xlab("Mean Rel. Abund. (log10)") +
+  ylab("Occupancy\n(% Samples)") + 
+  ylim(0,100) +
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank())
+
+# Plot occupancy barplot
+b.occ.p <- b.occ.df.month %>% 
+  group_by(Occupancy2) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(pOTU = n/sum(n) * 100) %>% 
+  ggplot(aes(Occupancy2, pOTU)) +
+  geom_bar(stat = "identity", size = 0.25, color = "gray25") +
+  scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
+  coord_flip() +
+  xlim(0,100) +
+  ylab("% vOTUs") +
+  theme_light() +
+  theme(text = element_text(size = 15), 
+        #axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "none")
+
+# Plot abundance density curve
+b.ab.p <- b.occ.df.month %>% 
+  ggplot(aes(MeanAbundance)) +
+  geom_density(fill = "gray25", color = "gray25") +
+  xlab("Mean Abundance (log10)") +
+  ylab("Density") +
+  scale_y_continuous() +
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.y= element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_blank())
+
+# Put plots together
+b.left <- cowplot::plot_grid(b.ab.p, b.curve.p, nrow = 2, align = "v", rel_heights = c(1,2), label_size = 20)
+b.right <- cowplot::plot_grid(NA, b.occ.p, nrow = 2, rel_heights = c(1,2), label_size = 20)
+b.vir <- cowplot::plot_grid(b.left, b.right, nrow = 1, align = "h", axis = "tb", rel_widths = c(3,2))
+b.vir
+```
+Load and format 16S data
+```{r}
+rrna.otu <- readRDS("../Data/rrna_otu_filt.RDS")
+rrna.otu.tidy <- tidy_otu(rrna.otu) %>% 
+  rename("Abundance" = "Count") 
+
+rrna.v.otu.tidy <- rrna.otu.tidy %>% 
+  inner_join(v.map, by = "SampleID")
+
+rrna.b.otu.tidy <- rrna.otu.tidy %>% 
+  inner_join(b.map, by = "SampleID")
+```
+
+Abundance-occupancy patterns of 16S OTUs detected in viromes
+```{r}
+# Calculate occupancy and abundance within month subsets 
+rrna.v.occ.df.month <- rrna.v.otu.tidy %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAbundance = Abundance/sum(Abundance)) %>% 
+  group_by(Month, OTU_ID) %>% 
+  summarise(Occupancy = sum(Abundance > 0), 
+            Occupancy2 = sum(Abundance > 0)/n() * 100,
+            MeanAbundance = mean(RelAbundance),
+            MeanRelAbundance = mean(RelAbundance)) %>% 
+  filter(Occupancy > 0) 
+
+# Plot ab-occ curve
+rrna.v.curve.p <- rrna.v.occ.df.month %>% 
+  ggplot(aes(MeanAbundance, Occupancy2)) +
+  geom_jitter(color = "gray25", alpha =0.8, shape = 1) +
+  xlab("Mean Rel. Abund. (log10)") +
+  ylab("Occupancy\n(% Samples)") + 
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank())
+
+# Plot occupancy barplot
+rrna.v.occ.p <- rrna.v.occ.df.month %>% 
+  group_by(Occupancy2) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(pOTU = n/sum(n) * 100) %>% 
+  ggplot(aes(Occupancy2, pOTU)) +
+  geom_bar(stat = "identity", size = 0.25, color = "gray25") +
+  scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
+  coord_flip() +
+  ylab("% 16S OTUs") +
+  theme_light() +
+  theme(text = element_text(size = 15), 
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "none")
+
+# Plot abundance density curve
+rrna.v.ab.p <- rrna.v.occ.df.month %>% 
+  ggplot(aes(MeanAbundance)) +
+  geom_density(fill = "gray25", color = "gray25") +
+  xlab("Mean Abundance (log10)") +
+  ylab("Density") +
+  scale_y_continuous() +
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.y= element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_blank())
+
+# Put plots together
+rrna.v.left <- cowplot::plot_grid(rrna.v.ab.p, rrna.v.curve.p, nrow = 2, align = "v", rel_heights = c(1,2), label_size = 20)
+rrna.v.right <- cowplot::plot_grid(NA, rrna.v.occ.p, nrow = 2, rel_heights = c(1,2), label_size = 20)
+rrna.v.vir <- cowplot::plot_grid(rrna.v.left, rrna.v.right, nrow = 1, align = "h", axis = "tb", rel_widths = c(3,2))
+rrna.v.vir
+```
+
+Abundance-occupancy patterns of 16S OTUs detected in total MGs
+```{r}
+# Calculate occupancy and abundance within month subsets 
+rrna.b.occ.df.month <- rrna.b.otu.tidy %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAbundance = Abundance/sum(Abundance)) %>% 
+  group_by(Month, OTU_ID) %>% 
+  summarise(Occupancy = sum(Abundance > 0), 
+            Occupancy2 = sum(Abundance > 0)/n() * 100,
+            MeanAbundance = mean(RelAbundance),
+            MeanRelAbundance = mean(RelAbundance)) %>% 
+  filter(Occupancy > 0) 
+
+# Plot ab-occ curve
+rrna.b.curve.p <- rrna.b.occ.df.month %>% 
+  ggplot(aes(MeanAbundance, Occupancy2)) +
+  geom_jitter(color = "gray25", alpha =0.8, shape = 1) +
+  xlab("Mean Rel. Abund. (log10)") +
+  ylab("Occupancy\n(% Samples)") + 
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        panel.border = element_blank())
+
+# Plot occupancy barplot
+rrna.b.occ.p <- rrna.b.occ.df.month %>% 
+  group_by(Occupancy2) %>% 
+  dplyr::count() %>% 
+  ungroup() %>% 
+  mutate(pOTU = n/sum(n) * 100) %>% 
+  ggplot(aes(Occupancy2, pOTU)) +
+  geom_bar(stat = "identity", size = 0.25, color = "gray25") +
+  scale_x_continuous(breaks = c(0, 25, 50, 75, 100)) +
+  coord_flip() +
+  ylab("% 16S OTUs") +
+  theme_light() +
+  theme(text = element_text(size = 15), 
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        legend.position = "none")
+
+# Plot abundance density curve
+rrna.b.ab.p <- rrna.b.occ.df.month %>% 
+  ggplot(aes(MeanAbundance)) +
+  geom_density(fill = "gray25", color = "gray25") +
+  xlab("Mean Abundance (log10)") +
+  ylab("Density") +
+  scale_y_continuous() +
+  scale_x_log10(labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  theme_light() +
+  theme(text = element_text(size = 15),
+        axis.text.y= element_blank(),
+        axis.title = element_blank(),
+        panel.border = element_blank())
+
+# Put plots together
+rrna.b.left <- cowplot::plot_grid(rrna.b.ab.p, rrna.b.curve.p, nrow = 2, align = "v", rel_heights = c(1,2), label_size = 20)
+rrna.b.right <- cowplot::plot_grid(NA, rrna.b.occ.p, nrow = 2, rel_heights = c(1,2), label_size = 20)
+rrna.b.vir <- cowplot::plot_grid(rrna.b.left, rrna.b.right, nrow = 1, align = "h", axis = "tb", rel_widths = c(3,2))
+rrna.b.vir
+```
+Generate supplementary figure 5
+```{r}
+cowplot::plot_grid(v.vir, rrna.v.vir, b.vir, rrna.b.vir,
+                   labels = c("A", "B", "C", "D"), label_size = 20)
+```
+
+Generate alluvial plot comparing the vOTU ranked abundances across paired total MGs and viromes
+```{r}
+overlap <- v.ids[v.ids %in% b.ids]
+overlap
+
+# Generate data frame with vOTU relative abundances and indicate whether a vOTU is part of the 94 set of overlapping vOTUs across profilling methods. 
+alluvial.df <- otu %>%
+  tidy_otu() %>%
+  filter(Count > 0) %>%
+  inner_join(map, by = "SampleID") %>%
+  group_by(Extraction, Month, BchNtr) %>%
+  mutate(RelAb = Count/sum(Count)) %>%
+  ungroup() %>%
+  mutate(Extraction = ifelse(Extraction == "BULK", "TMG", "Vir")) %>%
+  mutate(Detection = ifelse(OTU_ID %in% overlap, "TMGs and Viromes", 
+                            ifelse(OTU_ID %in% v.ids, "Viromes Only", "TMGs Only"))) %>% 
+  mutate(Detection = fct_relevel(Detection, "TMGs Only", "TMGs and Viromes")) 
+
+# Plot
+alluvial.p <- alluvial.df %>% 
+  ggplot(aes(Extraction, RelAb, alluvium = OTU_ID)) +
+  geom_alluvium(aes(fill = Detection, color = Detection), decreasing = F, size = 0.25, alpha = 0.5) +
+  scale_fill_manual(values = c("gray25", pal)) + 
+  scale_color_manual(values = c("gray25", pal)) +
+  xlab("Profiling Method") +
+  ylab("Relative Abundance") +
+  facet_grid(Month ~ BchNtr) +
+  theme_bw() +
+  theme(text = element_text(size = 15),
+        legend.position = "top")
+
+alluvial.p
 ```

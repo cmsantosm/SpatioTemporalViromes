@@ -1,9 +1,18 @@
+---
+title: "vir_tmg_comparison"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Figure 1, Supplementary Figures 2 & 3, and Supplementary Table 1
+
+Load libraries
 ```{r}
 source("../../General/general_functions.R")
 library(vegan)
 library(tidyverse)
 ```
 
+Load data and format
 ```{r}
 map <- readRDS("../Data/full_map.RDS") %>% 
   mutate(Method = fct_recode(Method,
@@ -23,8 +32,9 @@ map <- inner_join(map, sample.order, by = "Sample")
 ```
 
 
-SeqDepth
+Plot the sequencing depth of quality-filtered reads
 ```{r}
+# Load sequencing depths
 seq.stats <- readRDS("../Data/seq_qual_stats.RDS") %>% 
   mutate(LibraryID = str_extract(Library, "B.+_R(1|2)"),
          SampleID = str_extract(Library, "B.+L006"),
@@ -39,6 +49,7 @@ seq.depth <- seq.stats %>%
   mutate(EM = paste(Extraction, Month, sep = "-")) %>% 
   ungroup()
 
+# Calculate stats
 seq.depth %>% 
   filter(Type == "rmphix") %>% 
   group_by(Extraction, Month) %>% 
@@ -48,6 +59,7 @@ seq.depth %>%
             max(Total_Sequences),
             min(Total_Sequences))
 
+# Plot
 depth.p <- seq.depth %>% 
   filter(Type == "rmphix") %>% 
   ggplot(aes(Month, Total_Sequences, color = EM)) +
@@ -67,25 +79,30 @@ depth.p <- seq.depth %>%
   
 depth.p
 ```
-
+Generate supplementary table with the NCI SRA IDs and the sequencing depths
 ```{r}
+sra <- readRDS("../../General/sra.RDS")
+
 depth.table <- seq.depth %>% 
   select(SampleID, Method, Total_Sequences, Type, Month, Column, Row, BiocharFull, NitrogenFull, LibraryPrep) %>%
   spread(key = Type, value = Total_Sequences) %>% 
   rename("RawReads" = "raw",
          "FilteredReads" = "rmphix") %>% 
-  arrange(Month, Method)
+  arrange(Month, Method) %>% 
+  inner_join(sra, by = "SampleID") %>% 
+  select(SampleID, SRA_accession, everything())
 
 write.table(depth.table, "../Tables/seq_depth.tsv", sep = "\t", quote = F, row.names = F)
 ```
 
-
+Plot the percent of 16S reads across methods
 ```{r}
+# Load sortmeRNA data
 rrna.otu <- readRDS("../Data/rrna_otu.RDS")
 
 rrna.counts <- data.frame(SampleID = as.character(colnames(rrna.otu)),
                           rrna_reads = colSums(rrna.otu))
-
+# Calculate percentages
 rrna.perc <- seq.stats %>% 
   filter(Type == "rmphix") %>% 
   group_by(SampleID) %>% 
@@ -94,10 +111,12 @@ rrna.perc <- seq.stats %>%
   mutate(percent_rrna = rrna_reads/Total_Sequences * 100) %>% 
   inner_join(map)
 
+# Get values
 rrna.perc %>% 
   group_by(Extraction) %>% 
   summarise(TotalPercent16S = sum(rrna_reads)/sum(Total_Sequences) * 100)
 
+# Plot
 rrna.p <- rrna.perc %>% 
   mutate(EM = paste(Extraction, Month, sep = "-")) %>%  
   ggplot(aes(Month, percent_rrna, color = EM)) +
@@ -117,10 +136,12 @@ rrna.p <- rrna.perc %>%
 rrna.p
 ```
 
-Complexity
+Plot the complexity of each library
 ```{r}
+# Load sourmash data
 complexity <- readRDS("../Data/kmer_freq.RDS")
 
+# Plot
 complex.p <- complexity %>% 
   filter(Kmer == " k31") %>% 
   inner_join(map, by = "SampleID") %>% 
@@ -138,12 +159,13 @@ complex.p <- complexity %>%
 complex.p
 ```
 
-assemblies
+Plot the assembly stats for each library
 ```{r}
+# Load megahit assemblies info
 vir.ass <- readRDS("../Data/assembly_vir.RDS") %>% inner_join(select(map, SampleID, BchNtr, Method, Rank), by = "SampleID")
 
+# Load the megahit stats and reformat
 wrapped.stats <- read.table("../Data/2k.stats.wrapped.txt", header = T)
-
 wrapped.stats <- wrapped.stats %>% 
   mutate(SampleID = str_extract(filename, "B.*L006")) %>% 
   select(-filename) %>% 
@@ -151,10 +173,12 @@ wrapped.stats <- wrapped.stats %>%
   inner_join(map, by = "SampleID") %>% 
   mutate(EM = paste(Method, Month, sep = " - "))
 
+# Get values
 wrapped.stats %>% 
   group_by(Extraction) %>% 
   summarise(sum(contig_bp))
 
+# Get percent of viral contigs in each library
 vir.p <- vir.ass %>% 
   group_by(SampleID) %>% 
   summarise(pViral = sum(Viral)/n() * 100) %>% 
@@ -167,9 +191,7 @@ vir.ass %>%
             n(),
             sum(Viral)/n() * 100)
 
-vir.p
-
-
+# Plot distribution of contig lenghts
 vir.ass.p <- vir.ass %>% 
   mutate(EM = paste(Method, Month, sep = " - ")) %>% 
   ggplot(aes(reorder(BchNtr, -Rank), Length)) +
@@ -195,6 +217,7 @@ vir.ass.p <- vir.ass %>%
 vir.ass.p
 ```
 
+Generate a legend for panels A-C
 ```{r}
 legend.p <- map %>% 
   mutate(EM = paste(Method, Month, sep = " - ")) %>% 
@@ -209,31 +232,30 @@ legend.p <- map %>%
 
 legend.p
 ```
-
+Put it all together
 ```{r}
 left <- cowplot::plot_grid(cowplot::get_legend(legend.p), depth.p, rrna.p, complex.p, ncol = 1, rel_heights = c(1,3,3,3),
                            labels = c(NA,"A", "B", "C"), label_size = 20)
-left
-```
 
-```{r}
 right <- cowplot::plot_grid(cowplot::get_legend(vir.ass.p), vir.ass.p + theme(legend.position = "none"),ncol = 1, rel_heights = c(1,9),
                             labels = "D", label_size = 20)
 ### 666:795
 cowplot::plot_grid(left, right, nrow = 1, rel_widths = c(4,5))
 ```
 
+Analyze the 16S taxonomic profiles derived from each method
 ```{r}
+# Load sortmeRNA data and format
 rrna.otu.filt <- readRDS("../Data/rrna_otu_filt.RDS")
 rrna.tax <- readRDS("../Data/rrna_tax.RDS")
-
 rrna.otu.tidy <- tidy_otu(rrna.otu.filt)
 
+# Get most abundant phyla
 top.tax <- get_top_taxa(rel_ab(rrna.otu.filt), rrna.tax, rank = "Phylum", n=10)
 top.tax
-
 rrna.tax <- collapse_other_phylum(rrna.tax, top.tax)
 
+# Plot
 phy.p <- rrna.otu.tidy %>% 
   inner_join(rrna.tax, by = "OTU_ID") %>% 
   filter(Classification == "Classified") %>% 
@@ -262,7 +284,9 @@ phy.p <- rrna.otu.tidy %>%
 phy.p
 ```
 
+Identify differentially abundant phyla across profiling methods
 ```{r}
+# Generated a nested data frame of the phyla abundances (keeping paired total MGs and viromes)
 phy.nest <- rrna.otu.tidy %>% 
   inner_join(rrna.tax, by = "OTU_ID") %>% 
   filter(Classification == "Classified") %>% 
@@ -277,6 +301,7 @@ phy.nest <- rrna.otu.tidy %>%
   group_by(Phylum) %>% 
   nest()
 
+# Funcitons to perform wilcoxon tests 
 get_wilcox_greater <- function(x) {
   wilcox.test(x$BULK, x$VFD, paired = TRUE, alternative  = "greater") %>% 
   broom::tidy()
@@ -287,39 +312,65 @@ get_wilcox_less <- function(x) {
   broom::tidy()
 }  
 
-get_wilcox_ts <- function(x) {
-  wilcox.test(x$BULK, x$VFD, paired = TRUE, alternative  = "two.sided") %>% 
-  broom::tidy()
-}  
-
+# Perform tests
 wilcox.test <- phy.nest %>% 
-  mutate(Wilcox_ts = map(data, get_wilcox_ts)) %>% 
   mutate(Wilcox_greater = map(data, get_wilcox_greater)) %>% 
   mutate(Wilcox_less = map(data, get_wilcox_less)) 
 
-wt.p <- rbind(unnest(wilcox.test, Wilcox_ts), unnest(wilcox.test, Wilcox_greater), unnest(wilcox.test, Wilcox_less)) %>% 
+
+# Get the significant taxa
+sig.tax <- rbind(unnest(wilcox.test, Wilcox_greater), unnest(wilcox.test, Wilcox_less)) %>% 
   group_by(alternative) %>% 
   mutate(p.adjusted = p.adjust(p.value)) %>% 
   filter(p.adjusted < 0.05) %>% 
-  filter(alternative != "two.sided") %>%
+  .$Phylum %>% 
+  unique()
+
+# Plot the log2 fold change of significant taxa
+wt.p <- rrna.otu.tidy %>% 
+  inner_join(rrna.tax, by = "OTU_ID") %>% 
+  filter(Classification == "Classified") %>% 
+  group_by(SampleID) %>% 
+  mutate(RelAb = Count/sum(Count)) %>% 
+  group_by(Phylum, SampleID) %>% 
+  summarise(TaxAb = sum(RelAb)) %>% 
+  inner_join(map, by = "SampleID") %>% 
+  group_by(Phylum, Extraction) %>% 
+  summarise(MeanTaxAb = mean(TaxAb)) %>% 
   ungroup() %>% 
-  mutate(Enrichment = ifelse(alternative == "greater", "Total MG", "Virome")) %>% 
-  ggplot(aes(reorder(Phylum, -p.adjusted), -log10(p.adjusted), fill = Enrichment)) +
+  spread(key = Extraction, value = MeanTaxAb) %>% 
+  mutate(log2fc = log2(BULK/VFD)) %>% 
+  mutate(Enrichment = ifelse(log2fc > 0, "Total MG", "Virome")) %>% 
+  mutate(Position = ifelse(log2fc > 0, -0.5, 0.5)) %>% 
+  mutate(Hjust = ifelse(log2fc > 0, 1, 0)) %>% 
+  filter(Phylum %in% sig.tax) %>% 
+   mutate(Phylum = fct_recode(Phylum, 
+                             "Ca. Saccharibacteria" = "Candidatus Saccharibacteria")) %>% 
+  ggplot(aes(reorder(Phylum, log2fc), log2fc, fill = Enrichment)) +
   geom_bar(stat = "identity") +
+  geom_text(aes(y = Position, label = Phylum, hjust = Hjust), size = 4) +
   scale_fill_manual(values = c(RColorBrewer::brewer.pal(9, "Reds")[6],RColorBrewer::brewer.pal(9, "Blues")[6])) +
-  xlab("Phylum") +
-  ylab("Adjusted P-val (-log10)") +
-  coord_flip() +
+  xlab("Phylum") + 
+  ylab("log2 (TotalMG / Virome)") +
+  ylim(-7, 5) +
   theme_light() +
   theme(text = element_text(size = 15),
-        legend.position = "right")
-  
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  coord_flip()
+
 wt.p
 ```
 
+Calculate the rarefaction curves for 16S profiles in total MGs
 ```{r}
+# Calculate
 rrna.curve <- rarecurve(t(rrna.otu.filt))
+
+# Reformat
 rrna.curve <- bind_rows(lapply(rrna.curve, as.data.frame.list)) 
+
+# Plot
 rrcurve.p <- mutate(rrna.curve, SampleID = colnames(rrna.otu.filt)) %>% 
   gather(key = "SampleSize", value = "nSpecies", -SampleID) %>% 
   mutate(SampleSize = as.numeric(substring(SampleSize, 2))) %>% 
@@ -338,16 +389,19 @@ rrcurve.p <- mutate(rrna.curve, SampleID = colnames(rrna.otu.filt)) %>%
 rrcurve.p
 ```
 
+Put it all together
 ```{r}
 ### 992:621
-bottom <- cowplot::plot_grid(wt.p, rrcurve.p, nrow = 1, labels = c("B", "C"), rel_widths = c(3,2),label_size = 20)
+bottom <- cowplot::plot_grid(wt.p, rrcurve.p, nrow = 1, labels = c("B", "C"), rel_widths = c(2,2),label_size = 20)
 
 cowplot::plot_grid(phy.p, bottom, nrow = 2, rel_heights = c(3,2), labels = c("A"), label_size = 20)
 ```
-
+Get the read recruitment stats
 ```{r}
+# Load data
 map.stats <- readRDS("../Data/mapping_stats.RDS")
 
+# Get stats
 map.stats %>% 
   group_by(Extraction) %>% 
   summarise(MeanMapped = mean(PercentMapped),
@@ -356,7 +410,7 @@ map.stats %>%
             MeanNonMapped = mean(PercentNonMapped))
 ```
 
-
+Plot the percent of mapped reads per sample
 ```{r}
 mapped.p <- map.stats %>% 
   select(SampleID, PercentMappedAbove75, PercentMappedBelow75, PercentNonMapped) %>% 
@@ -388,21 +442,8 @@ mapped.p <- map.stats %>%
 
 mapped.p
 ```
-
+Plot the number of mapped reads vs number of vOTUs detected in each sample
 ```{r}
-limits <- map.stats %>% 
-  group_by(Extraction, Method) %>% 
-  summarise(sdMR = sd(Mapped75),
-            meanMR = mean(Mapped75),
-            sdOTUs = sd(nOTUs),
-            meanOTUs = mean(nOTUs)) %>% 
-  ungroup() %>% 
-  mutate(maxMR = meanMR + 2*sdMR,
-         minMR = meanMR - 2*sdMR,
-         maxOTUs = meanOTUs + 2*sdOTUs,
-         minOTUs = meanOTUs - 2*sdOTUs)
-
-limits
 tmp <-  map.stats %>% 
   mutate(Method = fct_recode(Method, "Total MG" = "Total Metagenome")) %>% 
   mutate(Set = paste(Method, Month, sep = " - ")) 
@@ -425,7 +466,7 @@ notu.p <- tmp %>%
 notu.p
 ```
 
-
+Put it all together
 ```{r}
 ### 600:575
 cowplot::plot_grid(mapped.p, notu.p, nrow = 2, rel_heights = c(5,5), labels = c("A","B"), label_size = 20)

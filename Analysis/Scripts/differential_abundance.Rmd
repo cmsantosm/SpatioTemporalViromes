@@ -1,3 +1,10 @@
+---
+title: "differential_abundance"
+output: html_notebook
+---
+
+This notebook contains the code to reproduce Supplementary Tables 6, 7, 9 & 10
+
 Load libraries. 
 ```{r}
 source("../../General/general_functions.R")
@@ -23,7 +30,6 @@ vc.genome <- readRDS("../Data/genome_vc_master.RDS")
 vc.clstr <- readRDS("../Data/cluster_vc_master.RDS")
 ```
 
-
 Perform differential abundance analyses. 
 I am using a single formula with the three factors shown to affect beta diversity in a PERMANOVA (Collection Time Point + Column + Biochar)
 ```{r}
@@ -35,6 +41,7 @@ v.dds.cts <- DESeq2::DESeq(v.dds.cts)
 
 Get the results for each factor and annotate. 
 ```{r}
+# Get vOTUs differentially abundant across collection time points
 v.res.batch <- tidy(DESeq2::results(v.dds.cts, contrast = c("Month", "Apr", "Aug"))) %>%
   dplyr::rename("OTU_ID" = "gene") %>% 
   mutate(TemporalEnrichment = case_when(p.adjusted < 0.05 & estimate > 0 ~ "Apr",
@@ -43,6 +50,7 @@ v.res.batch <- tidy(DESeq2::results(v.dds.cts, contrast = c("Month", "Apr", "Aug
   left_join(select(vc.genome, Genome, VC, VC.Status), by = c("OTU_ID" = "Genome")) %>% 
   left_join(select(vc.clstr, VC, ClstrComp:HostGenus))
 
+# Get vOTUs differentially abundant along the W-E gradient
 v.res.spatial <-  tidy(DESeq2::results(v.dds.cts, name = "Column")) %>%
   dplyr::rename("OTU_ID" = "gene") %>% 
   mutate(SpatialEnrichment = case_when(p.adjusted < 0.05 & estimate > 0 ~ "East-Enriched",
@@ -52,6 +60,7 @@ v.res.spatial <-  tidy(DESeq2::results(v.dds.cts, name = "Column")) %>%
   left_join(select(vc.genome, Genome, VC, VC.Status), by = c("OTU_ID" = "Genome")) %>% 
   left_join(select(vc.clstr, VC, ClstrComp:HostGenus))
 
+# Get vOTUs differentially abundant across biochar treatments
 v.dds.bch <- DESeq2::DESeq(v.dds.cts, test = "LRT", reduced = ~ Month + Column)
 v.res.bch <- tidy(DESeq2::results(v.dds.bch)) %>%
   dplyr::rename("OTU_ID" = "gene") %>% 
@@ -60,7 +69,7 @@ v.res.bch <- tidy(DESeq2::results(v.dds.bch)) %>%
   left_join(select(vc.clstr, VC, ClstrComp:HostGenus))
 ```
 
-
+Save results
 ```{r}
 saveRDS(v.res.spatial, "../Data/v_deseq_spatial.RDS")
 saveRDS(v.res.batch, "../Data/v_deseq_batch.RDS")
@@ -85,12 +94,6 @@ v.sig.spatial %>%
 
 v.sig.bch <- v.res.bch %>% 
   filter(p.adjusted < 0.05)
-
-dim(v.sig.bch)
-
-v.sig.batch
-v.sig.spatial
-v.sig.bch
 
 write.table(v.sig.batch, "../Tables/sig_vOTUs_time.tsv", sep = "\t", quote = F, row.names = F)
 write.table(v.sig.spatial, "../Tables/sig_vOTUs_spatial.tsv", sep = "\t", quote = F, row.names = F)
